@@ -13,6 +13,8 @@ import (
 	"time"
 	"path/filepath"
 
+	"golang.org/x/term"
+
 	"github.com/amaydixit11/vaultd/internal/crdt"
 	"github.com/amaydixit11/vaultd/internal/crypto"
 	"github.com/amaydixit11/vaultd/internal/sync"
@@ -65,7 +67,6 @@ Commands:
 
 Encryption:
   vaultd init   Initialize new encrypted vault
-  vaultd unlock Unlock vault (if using encrypted file)
 
 Daemon Mode:
   vaultd daemon --name node1 --data ~/.vaultd-node1
@@ -374,6 +375,23 @@ func cmdInvite(args []string) {
 		log.Fatalf("Failed to create invite: %v", err)
 	}
 
+	// If encrypted, include key
+	store := crypto.NewFileKeyStore(cfg.DataDir)
+	if store.IsInitialized() {
+		fmt.Printf("🔒 Vault is encrypted. Enter password to include key in invite: ")
+		password, err := readPassword()
+		if err != nil {
+			log.Fatalf("\nError: %v", err)
+		}
+		fmt.Println("")
+		
+		key, err := store.Unlock(password)
+		if err != nil {
+			log.Fatalf("Failed to unlock: %v", err)
+		}
+		invite.Key = key[:]
+	}
+
 	// Print QR code
 	qrStr, err := invite.ToQRString()
 	if err == nil {
@@ -434,6 +452,39 @@ func cmdPair(args []string) {
 		log.Fatalf("Invalid invite: %v", err)
 	}
 
+	// Handle key if present
+	if len(invite.Key) > 0 {
+		store := crypto.NewFileKeyStore(cfg.DataDir)
+		if !store.IsInitialized() {
+			fmt.Printf("🔑 Invite contains encryption key. Set a password to protect it: ")
+			pass1, err := readPassword()
+			if err != nil {
+				log.Fatalf("\nError: %v", err)
+			}
+			fmt.Printf("\nConfirm password: ")
+			pass2, err := readPassword()
+			if err != nil {
+				log.Fatalf("\nError: %v", err)
+			}
+			fmt.Println("")
+			
+			if string(pass1) != string(pass2) {
+				log.Fatalf("Passwords do not match")
+			}
+			
+			var key crypto.Key
+			if len(invite.Key) != crypto.KeySize {
+				log.Fatalf("Invalid key size in invite")
+			}
+			copy(key[:], invite.Key)
+			
+			if err := store.InitializeWithKey(pass1, key); err != nil {
+				log.Fatalf("Failed to initialize vault with key: %v", err)
+			}
+			fmt.Println("✅ Vault initialized with imported key.")
+		}
+	}
+
 	fmt.Printf("Connecting to peer %s...\n", invite.PeerID)
 	
 	// Connect
@@ -463,9 +514,15 @@ func cmdInit(args []string) {
 	}
 
 	fmt.Printf("Enter new password: ")
-	pass1, _ := readPassword()
+	pass1, err := readPassword()
+	if err != nil {
+		log.Fatalf("\nError reading password: %v", err)
+	}
 	fmt.Printf("\nConfirm password: ")
-	pass2, _ := readPassword()
+	pass2, err := readPassword()
+	if err != nil {
+		log.Fatalf("\nError reading password: %v", err)
+	}
 	fmt.Println("")
 
 	if string(pass1) != string(pass2) {
@@ -482,9 +539,12 @@ func cmdInit(args []string) {
 }
 
 func readPassword() ([]byte, error) {
-	// Simple stdin reader for now
-	// Ideally use terminal.ReadPassword
-	var password string
-	fmt.Scanln(&password)
-	return []byte(password), nil
+	fd := int(syscall.Stdin)
+	if !term.IsTerminal(fd) {
+		// Fallback for non-interactive
+		var password string
+		fmt.Scanln(&password)
+		return []byte(password), nil
+	}
+	return term.ReadPassword(fd)
 }

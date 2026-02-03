@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/crypto/argon2"
 )
 
 const KeyFileName = "keys.json"
@@ -16,6 +18,9 @@ const KeyFileName = "keys.json"
 type KeyStore interface {
 	// Initialize creates a new master key, encrypts it with password, and saves it
 	Initialize(password []byte) error
+
+	// InitializeWithKey creates a master key file with an existing key
+	InitializeWithKey(password []byte, key Key) error
 
 	// Unlock loads the master key using the password
 	Unlock(password []byte) (Key, error)
@@ -98,6 +103,57 @@ func (s *FileKeyStore) Initialize(password []byte) error {
 	}
 
 	return os.WriteFile(filepath.Join(s.dir, KeyFileName), data, 0600)
+	return os.WriteFile(filepath.Join(s.dir, KeyFileName), data, 0600)
+}
+
+func (s *FileKeyStore) InitializeWithKey(password []byte, masterKey Key) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.IsInitialized() {
+		return fmt.Errorf("keystore already initialized")
+	}
+
+	// 1. Generate salt for password wrapper
+	salt, err := GenerateSalt()
+	if err != nil {
+		return err
+	}
+
+	// 2. Derive wrapper key from password
+	// Use standard params for new keys
+	params := params{
+		Memory:      64 * 1024,
+		Iterations:  3,
+		Parallelism: 2,
+	}
+	dk := argon2.IDKey(password, salt, params.Iterations, params.Memory, params.Parallelism, KeySize)
+	wrapperKey := Key{}
+	copy(wrapperKey[:], dk)
+
+	// 3. Encrypt master key with wrapper key
+	encryptedKey, err := Encrypt(wrapperKey, masterKey[:], nil)
+	if err != nil {
+		return err
+	}
+
+	// 4. Save to file
+	kf := keyFileStruct{
+		Salt:       base64.StdEncoding.EncodeToString(salt),
+		Ciphertext: base64.StdEncoding.EncodeToString(encryptedKey),
+		Params:     params,
+	}
+
+	data, err := json.MarshalIndent(kf, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(s.dir, KeyFileName), data, 0600)
 }
 
 func (s *FileKeyStore) Unlock(password []byte) (Key, error) {
@@ -128,7 +184,17 @@ func (s *FileKeyStore) Unlock(password []byte) (Key, error) {
 	}
 
 	// 3. Derive wrapper key
-	wrapperKey := DeriveKey(password, salt)
+	// Ensure params from file are used if possible (currently hardcoded in DeriveKey, 
+	// so we actually need to update DeriveKey to accept params OR just validate they match defaults for now.
+	// Since DeriveKey API is fixed to constants, we should probably update DeriveKey or validate params.
+	// For now, let's validate parallelism/memory/iterations match what we expect.
+	// If we want to support changing params, we need to pass them to Argon2.
+	
+	// Better fix: Update DeriveKey to take params, or just use the values from json.
+	// Let's use the values from JSON.
+	dk := argon2.IDKey(password, salt, kf.Params.Iterations, kf.Params.Memory, kf.Params.Parallelism, KeySize)
+	wrapperKey := Key{}
+	copy(wrapperKey[:], dk)
 
 	// 4. Decrypt master key
 	plaintext, err := Decrypt(wrapperKey, ciphertext, nil)
@@ -145,6 +211,9 @@ func (s *FileKeyStore) Unlock(password []byte) (Key, error) {
 }
 
 func (s *FileKeyStore) IsInitialized() bool {
+	// No lock needed for stat check, and adding one causes deadlock
+	// when called from Initialize (which holds Write lock).
+	// To prevent TOCTOU races, rely on Initialize's lock.
 	_, err := os.Stat(filepath.Join(s.dir, KeyFileName))
 	return err == nil
 }

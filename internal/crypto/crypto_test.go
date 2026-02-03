@@ -52,7 +52,10 @@ func TestEncryption(t *testing.T) {
 
 func TestKeyDerivation(t *testing.T) {
 	password := []byte("password123")
-	salt, _ := GenerateSalt()
+	salt, err := GenerateSalt()
+	if err != nil {
+		t.Fatalf("failed to generate salt: %v", err)
+	}
 
 	key1 := DeriveKey(password, salt)
 	key2 := DeriveKey(password, salt)

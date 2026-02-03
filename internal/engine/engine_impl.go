@@ -141,9 +141,10 @@ func New(cfg Config) (Engine, error) {
 	var key *crypto.Key
 	if cfg.EncryptionKey != nil {
 		k, ok := cfg.EncryptionKey.(*crypto.Key)
-		if ok {
-			key = k
+		if !ok {
+			return nil, fmt.Errorf("invalid encryption key type: expected *crypto.Key, got %T", cfg.EncryptionKey)
 		}
+		key = k
 	}
 
 	return &engineImpl{

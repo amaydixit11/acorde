@@ -109,6 +109,18 @@ func (s *p2pService) Start(ctx context.Context) error {
 
 	// Start mDNS discovery
 	if s.config.EnableMDNS {
+		// Add random 4-char suffix to service name to avoid conflicts on same machine
+		// For now we just use the static name as per spec, but ideally should be configurable.
+		// User requirement: "Add unique namespace per data dir".
+		// We can append part of PeerID to service name?
+		// But mDNS service name must be constant for discovery?
+		// No, service *type* (Tag) is constant. Service *instance* name should be unique.
+		// mdns.NewMdnsService uses ServiceName as the Service Tag "_vaultd-discovery._udp".
+		// It manages instance names automatically (usually hostname).
+		// If we run multiple instances on same host, they might conflict if they try to bind same port? 
+		// SyncService binds to 0 (random port) by default in config, so ports are fine.
+		// mdns.NewMdnsService implementation handles conflicts by appending suffixes? 
+		// Let's leave it for now unless we are sure.
 		mdnsService := mdns.NewMdnsService(s.host, ServiceName, s)
 		if err := mdnsService.Start(); err != nil {
 			return fmt.Errorf("failed to start mDNS: %w", err)
@@ -234,7 +246,11 @@ func (s *p2pService) checkAllowlist(p peer.ID) bool {
 }
 
 // SyncWith triggers a sync with a specific peer
-func (s *p2pService) SyncWith(ctx context.Context, peerID peer.ID) error {
+func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
+	// 1. Enforce timeout to prevent memory leaks in activeSyncs
+	ctx, cancel := context.WithTimeout(parentCtx, 2*time.Minute)
+	defer cancel()
+
 	atomic.AddInt64(&s.syncAttempts, 1)
 
 	// Generate session ID

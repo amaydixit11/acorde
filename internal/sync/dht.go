@@ -77,13 +77,16 @@ func (d *DHTDiscovery) waitForBootstrap() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(30 * time.Second)
+	// User requested "DHT Bootstrap Will Fail on Fresh Install".
+	// We should probably wait less for interactive feel, or not block.
+	// But getting at least one peer is crucial for DHT to work.
+	timeout := time.After(15 * time.Second)
 	for {
 		select {
 		case <-d.ctx.Done():
 			return
 		case <-timeout:
-			d.logger.Printf("DHT: bootstrap timeout, continuing anyway")
+			d.logger.Printf("DHT: bootstrap timeout (0 peers). Discovery may be limited until better connectivity.")
 			goto startDiscovery
 		case <-ticker.C:
 			if len(d.host.Network().Peers()) > 0 {
