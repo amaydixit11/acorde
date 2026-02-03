@@ -102,7 +102,11 @@ func runWithEngine(cmd string, args []string) {
 	keyStore := crypto.NewFileKeyStore(dataDir)
 	if keyStore.IsInitialized() {
 		fmt.Printf("🔒 Vault is encrypted. Enter password: ")
-		password, _ := readPassword() // implemented below
+		password, err := readPassword() // implemented below
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nError reading password: %v\n", err)
+			os.Exit(1)
+		}
 		key, err := keyStore.Unlock(password)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)

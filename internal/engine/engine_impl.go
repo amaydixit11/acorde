@@ -80,8 +80,7 @@ type Engine interface {
 
 // engineImpl is the concrete implementation of the Engine interface
 // Replica is the source of truth, Storage is a materialized view
-// engineImpl is the concrete implementation of the Engine interface
-// Replica is the source of truth, Storage is a materialized view
+
 type engineImpl struct {
 	replica *crdt.Replica // CRDT state (source of truth)
 	store   storage.Store // Persistent storage (materialized view)

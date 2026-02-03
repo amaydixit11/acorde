@@ -57,7 +57,7 @@ func (s *FileKeyStore) Initialize(password []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.IsInitialized() {
+	if s.isInitialized() {
 		return fmt.Errorf("keystore already initialized")
 	}
 
@@ -77,7 +77,9 @@ func (s *FileKeyStore) Initialize(password []byte) error {
 	wrapperKey := DeriveKey(password, salt)
 
 	// 4. Encrypt master key with wrapper key
-	encryptedKey, err := Encrypt(wrapperKey, masterKey[:], nil)
+	// Use path as AAD to prevent file substitution
+	aad := []byte(filepath.Base(s.dir)) 
+	encryptedKey, err := Encrypt(wrapperKey, masterKey[:], aad)
 	if err != nil {
 		return err
 	}
@@ -110,7 +112,7 @@ func (s *FileKeyStore) InitializeWithKey(password []byte, masterKey Key) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.IsInitialized() {
+	if s.isInitialized() {
 		return fmt.Errorf("keystore already initialized")
 	}
 
@@ -132,7 +134,8 @@ func (s *FileKeyStore) InitializeWithKey(password []byte, masterKey Key) error {
 	copy(wrapperKey[:], dk)
 
 	// 3. Encrypt master key with wrapper key
-	encryptedKey, err := Encrypt(wrapperKey, masterKey[:], nil)
+	aad := []byte(filepath.Base(s.dir))
+	encryptedKey, err := Encrypt(wrapperKey, masterKey[:], aad)
 	if err != nil {
 		return err
 	}
@@ -197,7 +200,8 @@ func (s *FileKeyStore) Unlock(password []byte) (Key, error) {
 	copy(wrapperKey[:], dk)
 
 	// 4. Decrypt master key
-	plaintext, err := Decrypt(wrapperKey, ciphertext, nil)
+	aad := []byte(filepath.Base(s.dir))
+	plaintext, err := Decrypt(wrapperKey, ciphertext, aad)
 	if err != nil {
 		return k, errors.New("incorrect password or corrupted key file")
 	}
@@ -211,9 +215,13 @@ func (s *FileKeyStore) Unlock(password []byte) (Key, error) {
 }
 
 func (s *FileKeyStore) IsInitialized() bool {
-	// No lock needed for stat check, and adding one causes deadlock
-	// when called from Initialize (which holds Write lock).
-	// To prevent TOCTOU races, rely on Initialize's lock.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isInitialized()
+}
+
+// isInitialized is the internal lock-less check
+func (s *FileKeyStore) isInitialized() bool {
 	_, err := os.Stat(filepath.Join(s.dir, KeyFileName))
 	return err == nil
 }

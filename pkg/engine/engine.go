@@ -114,6 +114,7 @@ type Config struct {
 
 	// EncryptionKey is the key for encrypting entry content.
 	// It should be of type *crypto.Key.
+	// New() will return an error if the type is incorrect.
 	EncryptionKey interface{}
 }
 
