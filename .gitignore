@@ -1,0 +1,49 @@
+# Binaries
+vaultd
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Coverage
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# vaultd data (for development)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Build output
+/bin/
+/dist/
+
+# Debug
+__debug_bin*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Generated files
+digest.txt
