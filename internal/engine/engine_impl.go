@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/amaydixit11/vaultd/internal/core"
+	"github.com/amaydixit11/vaultd/internal/crdt"
 	"github.com/amaydixit11/vaultd/internal/storage"
 	"github.com/amaydixit11/vaultd/internal/storage/sqlite"
 	"github.com/google/uuid"
@@ -75,9 +77,10 @@ type Engine interface {
 }
 
 // engineImpl is the concrete implementation of the Engine interface
+// Replica is the source of truth, Storage is a materialized view
 type engineImpl struct {
-	clock *core.Clock
-	store storage.Store
+	replica *crdt.Replica // CRDT state (source of truth)
+	store   storage.Store // Persistent storage (materialized view)
 }
 
 // New creates a new engine instance
@@ -109,18 +112,30 @@ func New(cfg Config) (Engine, error) {
 		return nil, fmt.Errorf("failed to create storage: %w", err)
 	}
 
-	// Restore clock from storage
+	// Get max timestamp from storage for clock recovery
 	maxTime, err := store.GetMaxTimestamp()
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to get max timestamp: %w", err)
 	}
 
+	// Create CRDT Replica with recovered clock
 	clock := core.NewClockWithTime(maxTime)
+	replica := crdt.NewReplica(clock)
+
+	// Hydrate replica from storage (load existing entries into CRDT)
+	entries, err := store.List(storage.ListFilter{Deleted: true})
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to load entries: %w", err)
+	}
+	for _, entry := range entries {
+		replica.HydrateEntry(entry)
+	}
 
 	return &engineImpl{
-		clock: clock,
-		store: store,
+		replica: replica,
+		store:   store,
 	}, nil
 }
 
@@ -130,63 +145,52 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 		return Entry{}, fmt.Errorf("invalid entry type: %s", input.Type)
 	}
 
-	clockTime := e.clock.Tick()
-	entry := core.NewEntry(input.Type, input.Content, input.Tags, clockTime)
+	// Add to CRDT Replica (source of truth)
+	coreEntry := e.replica.AddEntry(input.Type, input.Content, input.Tags)
 
-	if err := e.store.Put(entry); err != nil {
+	// Persist to storage (materialized view)
+	if err := e.store.Put(coreEntry); err != nil {
 		return Entry{}, fmt.Errorf("failed to store entry: %w", err)
 	}
 
-	return toInternalEntry(entry), nil
+	return toInternalEntry(coreEntry), nil
 }
 
 // GetEntry retrieves an entry by ID
 func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
-	entry, err := e.store.Get(id)
+	coreEntry, err := e.replica.GetEntry(id)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, convertCRDTError(err)
 	}
-	return toInternalEntry(entry), nil
+	return toInternalEntry(coreEntry), nil
 }
 
 // UpdateEntry updates an existing entry
 func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
-	entry, err := e.store.Get(id)
-	if err != nil {
-		return err
+	// Update in CRDT Replica
+	if err := e.replica.UpdateEntry(id, input.Content, input.Tags); err != nil {
+		return convertCRDTError(err)
 	}
 
-	if entry.Deleted {
-		return fmt.Errorf("cannot update deleted entry")
-	}
-
-	if input.Content != nil {
-		entry.Content = *input.Content
-	}
-	if input.Tags != nil {
-		entry.Tags = *input.Tags
-	}
-
-	entry.UpdatedAt = e.clock.Tick()
-
-	return e.store.Put(entry)
+	// Get updated entry and persist
+	coreEntry, _ := e.replica.GetEntry(id)
+	return e.store.Put(coreEntry)
 }
 
 // DeleteEntry marks an entry as deleted
 func (e *engineImpl) DeleteEntry(id uuid.UUID) error {
-	entry, err := e.store.Get(id)
-	if err != nil {
-		return err
+	// Delete in CRDT Replica (creates tombstone)
+	if err := e.replica.DeleteEntry(id); err != nil {
+		return convertCRDTError(err)
 	}
 
-	entry.Deleted = true
-	entry.UpdatedAt = e.clock.Tick()
-
-	return e.store.Put(entry)
+	// Persist tombstone
+	return e.store.Delete(id)
 }
 
 // ListEntries returns entries matching the filter
 func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
+	// List from storage (it's the indexed/filtered view)
 	storeFilter := storage.ListFilter{
 		Type:    filter.Type,
 		Tag:     filter.Tag,
@@ -209,16 +213,35 @@ func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
 	return result, nil
 }
 
-// GetSyncPayload returns the current state for synchronization
-// This is a placeholder for Phase 3 implementation
+// GetSyncPayload returns the current CRDT state for synchronization
 func (e *engineImpl) GetSyncPayload() ([]byte, error) {
-	return nil, fmt.Errorf("sync not implemented yet")
+	state := e.replica.State()
+	return json.Marshal(state)
 }
 
-// ApplyRemotePayload applies remote state and merges
-// This is a placeholder for Phase 3 implementation
+// ApplyRemotePayload applies remote CRDT state and merges
 func (e *engineImpl) ApplyRemotePayload(payload []byte) error {
-	return fmt.Errorf("sync not implemented yet")
+	var state crdt.ReplicaState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	// Create temporary replica with received state
+	tempClock := core.NewClockWithTime(state.ClockTime)
+	tempReplica := crdt.NewReplica(tempClock)
+	tempReplica.LoadState(state)
+
+	// Merge into our replica
+	e.replica.Merge(tempReplica)
+
+	// Persist merged state to storage
+	for _, entry := range e.replica.ListEntries() {
+		if err := e.store.Put(entry); err != nil {
+			return fmt.Errorf("failed to persist merged entry: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // Close releases all resources
@@ -241,4 +264,15 @@ func toInternalEntry(e core.Entry) Entry {
 		UpdatedAt: e.UpdatedAt,
 		Deleted:   e.Deleted,
 	}
+}
+
+// convertCRDTError converts crdt errors to storage errors for consistency
+func convertCRDTError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if notFound, ok := err.(*crdt.ErrEntryNotFound); ok {
+		return storage.ErrNotFound{ID: notFound.ID}
+	}
+	return err
 }

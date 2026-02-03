@@ -22,6 +22,23 @@ func NewReplica(clock *core.Clock) *Replica {
 	}
 }
 
+// HydrateEntry loads an existing entry from storage into the CRDT.
+// Used during startup to populate the replica from durable storage.
+func (r *Replica) HydrateEntry(entry core.Entry) {
+	// Add entry to LWW-Set
+	r.entries.Add(entry)
+
+	// Add tags to OR-Set (each tag gets a deterministic token based on entry ID)
+	if len(entry.Tags) > 0 {
+		tagSet := r.getOrCreateTagSet(entry.ID)
+		for _, tag := range entry.Tags {
+			// Use namespace UUID to generate deterministic token
+			token := uuid.NewSHA1(entry.ID, []byte(tag))
+			tagSet.AddWithToken(tag, token)
+		}
+	}
+}
+
 // AddEntry adds a new entry to the replica.
 func (r *Replica) AddEntry(entryType core.EntryType, content []byte, tags []string) core.Entry {
 	timestamp := r.clock.Tick()
@@ -128,11 +145,21 @@ func (r *Replica) ListEntries() []core.Entry {
 
 // Merge merges another replica's state into this one.
 // Both entries (LWW-Set) and tags (OR-Sets) are merged.
+//
+// Tag Update Semantics:
+// - Concurrent tag updates from different replicas will be merged
+// - Both sets of tags will be present after merge (OR-Set behavior)
 func (r *Replica) Merge(other *Replica) {
-	// Merge entries
+	// Update clock FIRST (before merging state)
+	// This ensures causal consistency: any new operations after merge
+	// will have timestamps higher than all merged entries
+	otherMaxTime := other.MaxTimestamp()
+	r.clock.Update(otherMaxTime)
+
+	// Merge entries (LWW-Set)
 	r.entries.Merge(other.entries)
 
-	// Merge tags for all entries
+	// Merge tags for all entries (OR-Sets)
 	for id, otherTagSet := range other.tags {
 		if localTagSet, exists := r.tags[id]; exists {
 			localTagSet.Merge(otherTagSet)
@@ -140,10 +167,6 @@ func (r *Replica) Merge(other *Replica) {
 			r.tags[id] = otherTagSet.Clone()
 		}
 	}
-
-	// Update clock
-	otherMaxTime := other.MaxTimestamp()
-	r.clock.Update(otherMaxTime)
 }
 
 // MaxTimestamp returns the highest timestamp in this replica.
@@ -244,15 +267,15 @@ func (r *Replica) exportTags() map[uuid.UUID]TagSetState {
 
 // ReplicaState represents the serializable state of a replica.
 type ReplicaState struct {
-	Entries   []LWWElement
-	Tags      map[uuid.UUID]TagSetState
-	ClockTime uint64
+	Entries   []LWWElement              `json:"entries"`
+	Tags      map[uuid.UUID]TagSetState `json:"tags"`
+	ClockTime uint64                    `json:"clock_time"`
 }
 
 // TagSetState represents the serializable state of an OR-Set.
 type TagSetState struct {
-	Adds    []TagToken
-	Removes []TagToken
+	Adds    []TagToken `json:"adds"`
+	Removes []TagToken `json:"removes"`
 }
 
 // Error types

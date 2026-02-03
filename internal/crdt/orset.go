@@ -7,8 +7,8 @@ import (
 // TagToken represents a unique identifier for a tag addition.
 // Each time a tag is added, it gets a unique token.
 type TagToken struct {
-	Tag   string
-	Token uuid.UUID // Unique identifier for this add operation
+	Tag   string    `json:"tag"`
+	Token uuid.UUID `json:"token"` // Unique identifier for this add operation
 }
 
 // ORSet is an Observed-Remove Set for tags.

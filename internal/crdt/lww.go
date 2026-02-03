@@ -14,9 +14,9 @@ import (
 // LWWElement represents a single element in the LWW-Set.
 // It stores the entry along with metadata for conflict resolution.
 type LWWElement struct {
-	Entry     core.Entry
-	Timestamp uint64 // Logical time for LWW comparison
-	Deleted   bool   // Tombstone marker
+	Entry     core.Entry `json:"entry"`
+	Timestamp uint64     `json:"timestamp"` // Logical time for LWW comparison
+	Deleted   bool       `json:"deleted"`   // Tombstone marker
 }
 
 // LWWSet is a Last-Writer-Wins Element Set for entries.

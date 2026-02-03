@@ -158,10 +158,10 @@ func TestDeleteEntry(t *testing.T) {
 		t.Fatalf("failed to delete entry: %v", err)
 	}
 
-	// Entry should still be retrievable but marked deleted
-	deleted, _ := e.GetEntry(entry.ID)
-	if !deleted.Deleted {
-		t.Error("entry should be marked as deleted")
+	// Deleted entry returns error (CRDT tombstone semantics)
+	_, err = e.GetEntry(entry.ID)
+	if err == nil {
+		t.Error("GetEntry should return error for deleted entry")
 	}
 
 	// Should not appear in default list

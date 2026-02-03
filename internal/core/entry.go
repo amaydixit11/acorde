@@ -30,13 +30,13 @@ func (t EntryType) IsValid() bool {
 // Entry is the canonical state unit in vaultd
 // Content is opaque to vaultd - it doesn't parse or interpret it
 type Entry struct {
-	ID        uuid.UUID
-	Type      EntryType
-	Content   []byte   // Opaque to vaultd
-	Tags      []string
-	CreatedAt uint64   // Logical time (Lamport)
-	UpdatedAt uint64   // Logical time (Lamport)
-	Deleted   bool     // Tombstone for CRDT
+	ID        uuid.UUID `json:"id"`
+	Type      EntryType `json:"type"`
+	Content   []byte    `json:"content"` // Opaque to vaultd
+	Tags      []string  `json:"tags"`
+	CreatedAt uint64    `json:"created_at"` // Logical time (Lamport)
+	UpdatedAt uint64    `json:"updated_at"` // Logical time (Lamport)
+	Deleted   bool      `json:"deleted"`    // Tombstone for CRDT
 }
 
 // NewEntry creates a new entry with the given parameters
