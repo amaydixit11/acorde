@@ -74,9 +74,10 @@ func TestPublicAPI(t *testing.T) {
 		t.Fatalf("failed to delete: %v", err)
 	}
 
-	deleted, _ := e.GetEntry(entry.ID)
-	if !deleted.Deleted {
-		t.Error("entry should be deleted")
+	// Deleted entry returns error (CRDT tombstone semantics)
+	_, err = e.GetEntry(entry.ID)
+	if err == nil {
+		t.Error("GetEntry should return error for deleted entry")
 	}
 }
 

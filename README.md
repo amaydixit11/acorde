@@ -1,134 +1,105 @@
 # vaultd
 
-A local-first data synchronization engine providing durable storage, conflict-free replication, peer-to-peer synchronization, and end-to-end encryption for personal data applications.
+**vaultd** is a local-first, peer-to-peer data synchronization engine. It provides durable storage, conflict-free replication (CRDTs), and decentralized sync for personal data applications.
 
-## Overview
-
-**vaultd** is an embedded engine, not a standalone service. It has zero UI concerns and zero product opinions.
+Designed to be embedded in apps or run as a personal data daemon.
 
 ## Features
 
-- **State Management**: Entry lifecycle with logical clock tracking
-- **Persistence**: SQLite-based durable storage with crash-safe writes
-- **Replication**: CRDT-based conflict-free merging (Phase 2)
-- **Sync**: Transport-agnostic peer-to-peer synchronization (Phase 3)
-- **Security**: End-to-end encryption at rest and in transit (Phase 4)
+- **Local-First**: Works offline, stores data locally (SQLite).
+- **Conflict-Free**: Merges data from multiple devices automatically using CRDTs.
+- **Peer-to-Peer Sync**:
+  - **mDNS**: Zero-config LAN discovery (default).
+  - **DHT**: Global internet-wide discovery (optional).
+  - **Manual Pairing**: Privacy-first QR code invites.
+- **Embedded**: Go library + CLI daemon.
 
 ## Installation
 
 ```bash
 go get github.com/amaydixit11/vaultd
+go install github.com/amaydixit11/vaultd/cmd/vaultd@latest
 ```
 
-## Usage
+## Quick Start (CLI)
 
-### As a Library
+### 1. Start the Daemon
+Run this in a terminal to start the sync node. It will auto-discover peers.
+```bash
+vaultd daemon
+```
+
+### 2. Add Entries
+In another terminal, add data. It will sync to other peers automatically.
+```bash
+vaultd add --content "Hello World" --tags note,test
+```
+
+### 3. Global Discovery (DHT)
+To sync across the internet (different networks), enable DHT:
+```bash
+vaultd daemon --dht
+```
+
+---
+
+## Manual Pairing (Privacy Mode)
+
+For explicit, secure pairing between devices (e.g., Phone ↔ Laptop):
+
+**Device A (Generate Invite):**
+```bash
+vaultd invite
+# Displays QR code and invite string
+```
+
+**Device B (Connect):**
+```bash
+vaultd pair "vaultd://..."
+```
+This adds the peer to `~/.vaultd/peers.json` and establishes a direct connection.
+
+---
+
+## Library Usage
 
 ```go
 package main
 
 import (
+    "context"
     "github.com/amaydixit11/vaultd/pkg/engine"
+    "github.com/amaydixit11/vaultd/internal/sync"
 )
 
 func main() {
-    // Create engine
-    e, err := engine.New(engine.Config{})
-    if err != nil {
-        panic(err)
-    }
+    // 1. Create Engine (Storage + CRDT)
+    e, _ := engine.New(engine.Config{DataDir: "./data"})
     defer e.Close()
 
-    // Add an entry
-    entry, err := e.AddEntry(engine.AddEntryInput{
+    // 2. Add Data
+    e.AddEntry(engine.AddEntryInput{
         Type:    engine.Note,
-        Content: []byte("Hello, vaultd!"),
-        Tags:    []string{"demo"},
+        Content: []byte("Local-first data"),
     })
-    if err != nil {
-        panic(err)
-    }
 
-    // List entries
-    entries, _ := e.ListEntries(engine.ListFilter{})
-    for _, e := range entries {
-        fmt.Printf("%s: %s\n", e.ID, string(e.Content))
-    }
+    // 3. Start Sync (Optional)
+    // Adapts engine to sync protocol
+    adapter := sync.NewEngineAdapter(e)
+    svc, _ := sync.NewP2PService(adapter, sync.DefaultConfig())
+    svc.Start(context.Background())
 }
 ```
 
-### CLI (Development)
-
-```bash
-# Build CLI
-go build -o vaultd ./cmd/vaultd
-
-# Add entry
-./vaultd add --type note --content "Hello World" --tags work,important
-
-# List entries
-./vaultd list --type note
-
-# Get entry
-./vaultd get <uuid>
-
-# Update entry
-./vaultd update <uuid> --content "Updated content"
-
-# Delete entry
-./vaultd delete <uuid>
-```
-
-## Data Model
-
-### Entry Types
-
-- `note` - General notes
-- `log` - Log entries
-- `file` - File references
-- `event` - Calendar events
-
-### Entry Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| ID | UUID | Unique identifier |
-| Type | string | Entry type |
-| Content | []byte | Opaque content |
-| Tags | []string | Associated tags |
-| CreatedAt | uint64 | Logical creation time |
-| UpdatedAt | uint64 | Logical update time |
-| Deleted | bool | Tombstone marker |
-
 ## Architecture
 
-```
-vaultd/
-├── cmd/vaultd/          # Test CLI
-├── pkg/engine/          # Public API
-└── internal/
-    ├── core/            # Domain model (Entry, Clock)
-    ├── storage/         # Storage abstraction
-    │   └── sqlite/      # SQLite implementation
-    ├── engine/          # Engine implementation
-    ├── crdt/            # Replication logic (Phase 2)
-    ├── sync/            # Sync protocol (Phase 3)
-    └── crypto/          # Encryption (Phase 4)
-```
+- **Engine**: Handles storage (SQLite) and logical clocks.
+- **CRDT**: Merkle-DAG based causal trees for conflict resolution.
+- **Sync**: Protocol agnostic (currently libp2p) state synchronization.
 
-## Development
+## Status
 
-```bash
-# Run tests
-go test ./...
-
-# Run with coverage
-go test -cover ./...
-
-# Build
-go build ./...
-```
-
-## License
-
-MIT
+- ✅ Phase 1: Local Engine
+- ✅ Phase 2: CRDT Replication
+- ✅ Phase 3: P2P Sync (mDNS + DHT + Pairing)
+- 🚧 Phase 4: End-to-End Encryption (Next)
