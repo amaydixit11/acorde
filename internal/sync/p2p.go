@@ -28,9 +28,10 @@ type p2pService struct {
 	config   Config
 	logger   Logger
 
-	mdnsService mdns.Service
-	peers       map[peer.ID]struct{}
-	peersMu     gosync.RWMutex
+	mdnsService  mdns.Service
+	dhtDiscovery *DHTDiscovery
+	peers        map[peer.ID]struct{}
+	peersMu      gosync.RWMutex
 
 	// Active sync sessions to prevent duplicates
 	activeSyncs   map[string]struct{}
@@ -100,6 +101,21 @@ func (s *p2pService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start mDNS: %w", err)
 		}
 		s.mdnsService = mdnsService
+		s.logger.Printf("mDNS discovery enabled")
+	}
+
+	// Start DHT discovery
+	if s.config.EnableDHT {
+		bootstrapPeers := GetDefaultBootstrapPeers()
+		dhtDiscovery, err := NewDHTDiscovery(s.host, bootstrapPeers, s.logger)
+		if err != nil {
+			return fmt.Errorf("failed to create DHT: %w", err)
+		}
+		if err := dhtDiscovery.Start(s.HandlePeerFound); err != nil {
+			return fmt.Errorf("failed to start DHT: %w", err)
+		}
+		s.dhtDiscovery = dhtDiscovery
+		s.logger.Printf("DHT discovery enabled (global)")
 	}
 
 	// Start periodic sync
@@ -119,6 +135,10 @@ func (s *p2pService) Stop() error {
 
 	if s.mdnsService != nil {
 		s.mdnsService.Close()
+	}
+
+	if s.dhtDiscovery != nil {
+		s.dhtDiscovery.Stop()
 	}
 
 	return s.host.Close()

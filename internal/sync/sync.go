@@ -36,6 +36,10 @@ type Config struct {
 	// Default: true
 	EnableMDNS bool
 
+	// EnableDHT enables Kademlia DHT for global peer discovery
+	// Default: false (uses IPFS bootstrap nodes)
+	EnableDHT bool
+
 	// Logger for sync events (optional)
 	Logger Logger
 }
