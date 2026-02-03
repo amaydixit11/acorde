@@ -111,13 +111,19 @@ type Config struct {
 	// InMemory creates a temporary in-memory database.
 	// If true, DataDir is ignored.
 	InMemory bool
+
+	// EncryptionKey is the key for encrypting entry content.
+	// It should be of type *crypto.Key.
+	// New() will return an error if the type is incorrect.
+	EncryptionKey interface{}
 }
 
 // New creates a new vaultd Engine with the given configuration.
 func New(cfg Config) (Engine, error) {
 	internalEngine, err := impl.New(impl.Config{
-		DataDir:  cfg.DataDir,
-		InMemory: cfg.InMemory,
+		DataDir:       cfg.DataDir,
+		InMemory:      cfg.InMemory,
+		EncryptionKey: cfg.EncryptionKey,
 	})
 	if err != nil {
 		return nil, err

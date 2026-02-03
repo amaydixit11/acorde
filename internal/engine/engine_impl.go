@@ -8,6 +8,7 @@ import (
 
 	"github.com/amaydixit11/vaultd/internal/core"
 	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/vaultd/internal/crypto"
 	"github.com/amaydixit11/vaultd/internal/storage"
 	"github.com/amaydixit11/vaultd/internal/storage/sqlite"
 	"github.com/google/uuid"
@@ -15,8 +16,9 @@ import (
 
 // Config contains configuration options for the engine
 type Config struct {
-	DataDir  string
-	InMemory bool
+	DataDir       string
+	InMemory      bool
+	EncryptionKey interface{} // *crypto.Key or nil
 }
 
 // EntryType is re-exported from core for use by pkg/engine wrapper
@@ -78,9 +80,11 @@ type Engine interface {
 
 // engineImpl is the concrete implementation of the Engine interface
 // Replica is the source of truth, Storage is a materialized view
+
 type engineImpl struct {
 	replica *crdt.Replica // CRDT state (source of truth)
 	store   storage.Store // Persistent storage (materialized view)
+	key     *crypto.Key   // Encryption key (nil = disabled)
 }
 
 // New creates a new engine instance
@@ -133,9 +137,19 @@ func New(cfg Config) (Engine, error) {
 		replica.HydrateEntry(entry)
 	}
 
+	var key *crypto.Key
+	if cfg.EncryptionKey != nil {
+		k, ok := cfg.EncryptionKey.(*crypto.Key)
+		if !ok {
+			return nil, fmt.Errorf("invalid encryption key type: expected *crypto.Key, got %T", cfg.EncryptionKey)
+		}
+		key = k
+	}
+
 	return &engineImpl{
 		replica: replica,
 		store:   store,
+		key:     key,
 	}, nil
 }
 
@@ -145,15 +159,31 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 		return Entry{}, fmt.Errorf("invalid entry type: %s", input.Type)
 	}
 
+	// Generate ID for AAD binding
+	id := uuid.New()
+
+	// Encrypt content if key is present
+	content := input.Content
+	if e.key != nil {
+		aad := []byte(id.String()) // Bind ID to content
+		encrypted, err := crypto.Encrypt(*e.key, content, aad)
+		if err != nil {
+			return Entry{}, fmt.Errorf("encryption failed: %w", err)
+		}
+		content = encrypted
+	}
+
 	// Add to CRDT Replica (source of truth)
-	coreEntry := e.replica.AddEntry(input.Type, input.Content, input.Tags)
+	coreEntry := e.replica.AddEntryWithID(id, input.Type, content, input.Tags)
 
 	// Persist to storage (materialized view)
 	if err := e.store.Put(coreEntry); err != nil {
 		return Entry{}, fmt.Errorf("failed to store entry: %w", err)
 	}
 
-	return toInternalEntry(coreEntry), nil
+	result := toInternalEntry(coreEntry)
+	result.Content = input.Content // Return plaintext to caller
+	return result, nil
 }
 
 // GetEntry retrieves an entry by ID
@@ -162,13 +192,52 @@ func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
 	if err != nil {
 		return Entry{}, convertCRDTError(err)
 	}
-	return toInternalEntry(coreEntry), nil
+	
+	entry := toInternalEntry(coreEntry)
+	if e.key != nil && len(entry.Content) > 0 {
+		aad := []byte(id.String())
+		plaintext, err := crypto.Decrypt(*e.key, entry.Content, aad)
+		if err != nil {
+			return Entry{}, fmt.Errorf("decryption failed: %w", err)
+		}
+		entry.Content = plaintext
+	}
+	return entry, nil
 }
 
 // UpdateEntry updates an existing entry
 func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
+	var content []byte
+	var tags []string
+
+	// Check if update is needed
+	current, err := e.replica.GetEntry(id)
+	if err != nil {
+		return convertCRDTError(err)
+	}
+
+	if input.Content != nil {
+		content = *input.Content
+		if e.key != nil {
+			aad := []byte(id.String())
+			encrypted, err := crypto.Encrypt(*e.key, content, aad)
+			if err != nil {
+				return fmt.Errorf("encryption failed: %w", err)
+			}
+			content = encrypted
+		}
+	} else {
+		content = current.Content
+	}
+
+	if input.Tags != nil {
+		tags = *input.Tags
+	} else {
+		tags = current.Tags
+	}
+
 	// Update in CRDT Replica
-	if err := e.replica.UpdateEntry(id, input.Content, input.Tags); err != nil {
+	if err := e.replica.UpdateEntry(id, &content, &tags); err != nil {
 		return convertCRDTError(err)
 	}
 
@@ -208,7 +277,16 @@ func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
 
 	result := make([]Entry, len(entries))
 	for i, entry := range entries {
-		result[i] = toInternalEntry(entry)
+		internal := toInternalEntry(entry)
+		if e.key != nil && len(internal.Content) > 0 {
+			aad := []byte(internal.ID.String())
+			plaintext, err := crypto.Decrypt(*e.key, internal.Content, aad)
+			if err != nil {
+				return nil, fmt.Errorf("decryption failed for entry %s: %w", internal.ID, err)
+			}
+			internal.Content = plaintext
+		}
+		result[i] = internal
 	}
 	return result, nil
 }

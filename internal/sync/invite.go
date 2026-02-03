@@ -28,6 +28,7 @@ type PeerInvite struct {
 	CreatedAt int64    `json:"c"`    // Unix timestamp
 	ExpiresAt int64    `json:"e"`    // Expiry timestamp
 	Signature []byte   `json:"s"`    // Signature over above fields
+	Key       []byte   `json:"y,omitempty"` // Encryption key (optional)
 }
 
 // CreateInvite generates a signed invite for this host
