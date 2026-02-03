@@ -28,6 +28,7 @@ type p2pService struct {
 	config   Config
 	logger   Logger
 
+	allowlist    *Allowlist
 	mdnsService  mdns.Service
 	dhtDiscovery *DHTDiscovery
 	peers        map[peer.ID]struct{}
@@ -77,11 +78,23 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 		logger = noopLogger{}
 	}
 
+
+	var allowlist *Allowlist
+	if cfg.AllowlistPath != "" {
+		al, err := NewAllowlist(cfg.AllowlistPath, cfg.StrictAllowlist)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load allowlist: %w", err)
+		}
+		allowlist = al
+		logger.Printf("Allowlist enabled (strict=%v): %d peers loaded", cfg.StrictAllowlist, al.Count())
+	}
+
 	return &p2pService{
 		host:        h,
 		provider:    provider,
 		config:      cfg,
 		logger:      logger,
+		allowlist:   allowlist,
 		peers:       make(map[peer.ID]struct{}),
 		activeSyncs: make(map[string]struct{}),
 	}, nil
@@ -163,6 +176,61 @@ func (s *p2pService) Metrics() SyncMetrics {
 		SyncSuccesses: atomic.LoadInt64(&s.syncSuccesses),
 		SyncFailures:  atomic.LoadInt64(&s.syncFailures),
 	}
+}
+
+// GetHost returns the underlying libp2p host
+func (s *p2pService) GetHost() host.Host {
+	return s.host
+}
+
+// ConnectPeer adds a peer to the allowlist (if enabled) and connects to it
+func (s *p2pService) ConnectPeer(invite *PeerInvite) error {
+	peerID, err := peer.Decode(invite.PeerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	// Add to allowlist if active
+	if s.allowlist != nil {
+		if err := s.allowlist.Add(peerID, "", invite.Addresses); err != nil {
+			return fmt.Errorf("failed to add peer to allowlist: %w", err)
+		}
+	}
+
+	// Parse addresses
+	peerInfo := peer.AddrInfo{ID: peerID}
+	for _, addrStr := range invite.Addresses {
+		ma, err := multiaddr.NewMultiaddr(addrStr)
+		if err != nil {
+			continue
+		}
+		peerInfo.Addrs = append(peerInfo.Addrs, ma)
+	}
+
+	if len(peerInfo.Addrs) == 0 {
+		return fmt.Errorf("no valid addresses in invite")
+	}
+
+	// Connect
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := s.host.Connect(ctx, peerInfo); err != nil {
+		return fmt.Errorf("failed to connect to peer: %w", err)
+	}
+
+	// Trigger immediate sync
+	go s.SyncWith(s.ctx, peerID)
+
+	return nil
+}
+
+// checkAllowlist returns true if the peer is allowed to sync
+func (s *p2pService) checkAllowlist(p peer.ID) bool {
+	if s.allowlist == nil {
+		return true // No allowlist = accept all
+	}
+	return s.allowlist.IsAllowed(p)
 }
 
 // SyncWith triggers a sync with a specific peer
@@ -301,6 +369,12 @@ func (s *p2pService) handleStream(stream network.Stream) {
 
 	// Set deadline
 	stream.SetDeadline(time.Now().Add(30 * time.Second))
+
+	// Check allowlist if enabled
+	if !s.checkAllowlist(stream.Conn().RemotePeer()) {
+		s.logger.Printf("rejected connection from unauthorized peer %s", stream.Conn().RemotePeer())
+		return
+	}
 
 	// Read incoming message
 	msg, err := readMessage(stream)

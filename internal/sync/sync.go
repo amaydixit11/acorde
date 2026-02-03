@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -39,6 +40,14 @@ type Config struct {
 	// EnableDHT enables Kademlia DHT for global peer discovery
 	// Default: false (uses IPFS bootstrap nodes)
 	EnableDHT bool
+
+	// AllowlistPath is the path to the trusted peers file
+	// Default: "" (no persistence)
+	AllowlistPath string
+
+	// StrictAllowlist rejects peers not in the allowlist
+	// Default: false (accept all)
+	StrictAllowlist bool
 
 	// Logger for sync events (optional)
 	Logger Logger
@@ -74,6 +83,12 @@ type SyncService interface {
 
 	// Metrics returns sync statistics
 	Metrics() SyncMetrics
+
+	// GetHost returns the underlying libp2p host
+	GetHost() host.Host
+
+	// ConnectPeer connects to a peer from an invite
+	ConnectPeer(invite *PeerInvite) error
 }
 
 // SyncMetrics provides sync statistics

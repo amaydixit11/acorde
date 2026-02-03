@@ -1,0 +1,407 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/vaultd/internal/sync"
+	"github.com/amaydixit11/vaultd/pkg/engine"
+	"github.com/google/uuid"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	switch cmd {
+	case "daemon":
+		cmdDaemon(args)
+	case "invite":
+		cmdInvite(args)
+	case "pair":
+		cmdPair(args)
+	case "add", "get", "list", "update", "delete":
+		runWithEngine(cmd, args)
+	case "help":
+		printUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Println(`vaultd - Local-first data engine with P2P sync
+
+Usage: vaultd <command> [options]
+
+Commands:
+  daemon   Start sync daemon (auto-discovers peers on LAN)
+  add      Add a new entry
+  get      Get an entry by ID  
+  list     List entries
+  update   Update an entry
+  delete   Delete an entry
+  help     Show this help
+
+Daemon Mode:
+  vaultd daemon --name node1 --data ~/.vaultd-node1
+  vaultd daemon --name node2 --data ~/.vaultd-node2
+
+Entry Commands:
+  vaultd add --type note --content "Hello World" --tags work,important
+  vaultd list --type note
+  vaultd get <uuid>
+  vaultd update <uuid> --content "Updated"
+  vaultd delete <uuid>`)
+}
+
+func runWithEngine(cmd string, args []string) {
+	e, err := engine.New(engine.Config{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer e.Close()
+
+	switch cmd {
+	case "add":
+		cmdAdd(e, args)
+	case "get":
+		cmdGet(e, args)
+	case "list":
+		cmdList(e, args)
+	case "update":
+		cmdUpdate(e, args)
+	case "delete":
+		cmdDelete(e, args)
+	}
+}
+
+// syncableEngine wraps pkg/engine.Engine to implement sync.Syncable
+type syncableEngine struct {
+	engine.Engine
+}
+
+func (s *syncableEngine) GetSyncState() crdt.ReplicaState {
+	payload, _ := s.GetSyncPayload()
+	var state crdt.ReplicaState
+	json.Unmarshal(payload, &state)
+	return state
+}
+
+func (s *syncableEngine) ApplySyncState(state crdt.ReplicaState) error {
+	payload, _ := json.Marshal(state)
+	return s.ApplyRemotePayload(payload)
+}
+
+type stdLogger struct{}
+
+func (stdLogger) Printf(format string, v ...interface{}) {
+	log.Printf(format, v...)
+}
+
+func cmdDaemon(args []string) {
+	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
+	name := fs.String("name", "vaultd", "Node name for logging")
+	dataDir := fs.String("data", "", "Data directory (default: ~/.vaultd)")
+	port := fs.Int("port", 0, "Port to listen on (0 = random)")
+	enableDHT := fs.Bool("dht", false, "Enable DHT for global peer discovery")
+	fs.Parse(args)
+
+	log.Printf("🚀 Starting vaultd daemon [%s]...", *name)
+
+	// Create engine
+	cfg := engine.Config{DataDir: *dataDir}
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create engine: %v", err)
+	}
+	defer e.Close()
+
+	// Create sync service
+	syncCfg := sync.DefaultConfig()
+	if *port > 0 {
+		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
+	}
+	syncCfg.Logger = stdLogger{}
+	syncCfg.EnableDHT = *enableDHT
+
+	adapter := sync.NewEngineAdapter(&syncableEngine{e})
+	svc, err := sync.NewP2PService(adapter, syncCfg)
+	if err != nil {
+		log.Fatalf("Failed to create sync service: %v", err)
+	}
+
+	// Start sync
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := svc.Start(ctx); err != nil {
+		log.Fatalf("Failed to start sync: %v", err)
+	}
+
+	log.Printf("✅ Daemon started! Discovering peers on LAN...")
+	log.Printf("📋 Add entries in another terminal:")
+	log.Printf("   go run ./cmd/vaultd add --type note --content 'Hello!'")
+
+	// Print peers periodically
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		for range ticker.C {
+			peers := svc.Peers()
+			metrics := svc.Metrics()
+			if len(peers) > 0 {
+				log.Printf("👥 Connected peers: %d | Syncs: %d success, %d failed",
+					len(peers), metrics.SyncSuccesses, metrics.SyncFailures)
+			}
+		}
+	}()
+
+	// Wait for interrupt
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	log.Printf("🛑 Shutting down...")
+	cancel()
+	svc.Stop()
+	log.Printf("👋 Goodbye!")
+}
+
+func cmdAdd(e engine.Engine, args []string) {
+	fs := flag.NewFlagSet("add", flag.ExitOnError)
+	typeStr := fs.String("type", "note", "Entry type")
+	content := fs.String("content", "", "Entry content")
+	tagsStr := fs.String("tags", "", "Comma-separated tags")
+	fs.Parse(args)
+
+	var tags []string
+	if *tagsStr != "" {
+		tags = strings.Split(*tagsStr, ",")
+		for i, t := range tags {
+			tags[i] = strings.TrimSpace(t)
+		}
+	}
+
+	entryType := engine.EntryType(*typeStr)
+	entry, err := e.AddEntry(engine.AddEntryInput{
+		Type:    entryType,
+		Content: []byte(*content),
+		Tags:    tags,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	printEntry(entry)
+}
+
+func cmdGet(e engine.Engine, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: vaultd get <uuid>")
+		os.Exit(1)
+	}
+	id, _ := uuid.Parse(args[0])
+	entry, err := e.GetEntry(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	printEntry(entry)
+}
+
+func cmdList(e engine.Engine, args []string) {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	typeStr := fs.String("type", "", "Filter by type")
+	tag := fs.String("tag", "", "Filter by tag")
+	fs.Parse(args)
+
+	filter := engine.ListFilter{}
+	if *typeStr != "" {
+		t := engine.EntryType(*typeStr)
+		filter.Type = &t
+	}
+	if *tag != "" {
+		filter.Tag = tag
+	}
+
+	entries, err := e.ListEntries(filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No entries found.")
+		return
+	}
+	for _, entry := range entries {
+		fmt.Printf("%s [%s] %s\n", entry.ID.String()[:8], entry.Type, string(entry.Content)[:min(40, len(entry.Content))])
+	}
+}
+
+func cmdUpdate(e engine.Engine, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: vaultd update <uuid> --content <new>")
+		os.Exit(1)
+	}
+	id, _ := uuid.Parse(args[0])
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	content := fs.String("content", "", "New content")
+	fs.Parse(args[1:])
+
+	input := engine.UpdateEntryInput{}
+	if *content != "" {
+		c := []byte(*content)
+		input.Content = &c
+	}
+	if err := e.UpdateEntry(id, input); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Updated.")
+}
+
+func cmdDelete(e engine.Engine, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: vaultd delete <uuid>")
+		os.Exit(1)
+	}
+	id, _ := uuid.Parse(args[0])
+	if err := e.DeleteEntry(id); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Deleted.")
+}
+
+func printEntry(entry engine.Entry) {
+	data := map[string]interface{}{
+		"id":      entry.ID.String(),
+		"type":    string(entry.Type),
+		"content": string(entry.Content),
+		"tags":    entry.Tags,
+	}
+	out, _ := json.MarshalIndent(data, "", "  ")
+	fmt.Println(string(out))
+}
+
+func min(a, b int) int {
+	if a < b { return a }
+	return b
+}
+
+func cmdInvite(args []string) {
+	fs := flag.NewFlagSet("invite", flag.ExitOnError)
+	dataDir := fs.String("data", "", "Data directory")
+	expiry := fs.Duration("expiry", 24*time.Hour, "Invite expiry duration")
+	fs.Parse(args)
+
+	cfg := engine.Config{DataDir: *dataDir}
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+	defer e.Close()
+
+	// Create sync service just for the host
+	syncCfg := sync.DefaultConfig()
+	syncCfg.EnableMDNS = false
+	provider := sync.NewEngineAdapter(&syncableEngine{e})
+	svc, err := sync.NewP2PService(provider, syncCfg)
+	if err != nil {
+		log.Fatalf("Failed to create service: %v", err)
+	}
+	defer svc.Stop()
+
+	// Get the host from the service
+	// Use interface method
+	invite, err := sync.CreateInvite(svc.GetHost(), *expiry)
+	if err != nil {
+		log.Fatalf("Failed to create invite: %v", err)
+	}
+
+	// Print QR code
+	qrStr, err := invite.ToQRString()
+	if err == nil {
+		fmt.Println(qrStr)
+	}
+
+	// Print minimal code
+	fmt.Printf("\nInvite code: %s\n", invite.ToMinimalCode())
+	fmt.Printf("Expires in: %s\n", invite.ExpiresIn().Round(time.Minute))
+
+	// Also print full code for copy/paste
+	fullCode, _ := invite.Encode()
+	fmt.Printf("\nFull code (for CLI): %s\n", fullCode)
+}
+
+func cmdPair(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: vaultd pair <invite-code> [options]\n")
+		os.Exit(1)
+	}
+	inviteCode := args[0]
+	
+	fs := flag.NewFlagSet("pair", flag.ExitOnError)
+	dataDir := fs.String("data", "", "Data directory")
+	fs.Parse(args[1:])
+
+	// Load allowlist/engine
+	cfg := engine.Config{DataDir: *dataDir}
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Error: %v", err)
+	}
+	defer e.Close()
+
+	// Create sync service
+	syncCfg := sync.DefaultConfig()
+	if *dataDir != "" {
+		syncCfg.AllowlistPath = *dataDir // Use data dir name for peer file location
+	}
+	
+	provider := sync.NewEngineAdapter(&syncableEngine{e})
+	svc, err := sync.NewP2PService(provider, syncCfg)
+	if err != nil {
+		log.Fatalf("Failed to create service: %v", err)
+	}
+	defer svc.Stop()
+	
+	// Start service to allow connection
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := svc.Start(ctx); err != nil {
+		log.Fatalf("Failed to start service: %v", err)
+	}
+
+	// Parse invite
+	invite, err := sync.ParseInvite(inviteCode)
+	if err != nil {
+		log.Fatalf("Invalid invite: %v", err)
+	}
+
+	fmt.Printf("Connecting to peer %s...\n", invite.PeerID)
+	
+	// Connect
+	if err := svc.ConnectPeer(invite); err != nil {
+		log.Fatalf("Failed to pair: %v", err)
+	}
+
+	fmt.Printf("✅ Successfully paired and connected!\n")
+	fmt.Printf("Peer added to allowlist. Start daemon to begin syncing.\n")
+}
