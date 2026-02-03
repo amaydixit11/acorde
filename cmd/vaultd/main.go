@@ -507,7 +507,10 @@ func cmdInit(args []string) {
 
 	dir := *dataDir
 	if dir == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("Failed to get user home directory: %v", err)
+		}
 		dir = filepath.Join(home, ".vaultd")
 	}
 

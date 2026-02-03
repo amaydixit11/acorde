@@ -105,7 +105,6 @@ func (s *FileKeyStore) Initialize(password []byte) error {
 	}
 
 	return os.WriteFile(filepath.Join(s.dir, KeyFileName), data, 0600)
-	return os.WriteFile(filepath.Join(s.dir, KeyFileName), data, 0600)
 }
 
 func (s *FileKeyStore) InitializeWithKey(password []byte, masterKey Key) error {
