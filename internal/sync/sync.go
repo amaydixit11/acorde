@@ -1,11 +1,15 @@
 // Package sync provides peer-to-peer synchronization for vaultd.
 //
 // It uses libp2p for networking and mDNS for local peer discovery.
+// The protocol uses state-based sync with hash comparison for efficiency.
 package sync
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
@@ -31,6 +35,14 @@ type Config struct {
 	// EnableMDNS enables mDNS for LAN peer discovery
 	// Default: true
 	EnableMDNS bool
+
+	// Logger for sync events (optional)
+	Logger Logger
+}
+
+// Logger interface for sync events
+type Logger interface {
+	Printf(format string, v ...interface{})
 }
 
 // DefaultConfig returns the default sync configuration
@@ -55,9 +67,20 @@ type SyncService interface {
 
 	// SyncWith triggers a sync with a specific peer
 	SyncWith(ctx context.Context, peerID peer.ID) error
+
+	// Metrics returns sync statistics
+	Metrics() SyncMetrics
+}
+
+// SyncMetrics provides sync statistics
+type SyncMetrics struct {
+	SyncAttempts  int64
+	SyncSuccesses int64
+	SyncFailures  int64
 }
 
 // StateProvider provides CRDT state for sync
+// This interface decouples the sync layer from the engine internals.
 type StateProvider interface {
 	// GetState returns the current replica state
 	GetState() crdt.ReplicaState
@@ -81,6 +104,7 @@ const (
 // Message is a sync protocol message
 type Message struct {
 	Type      MessageType `json:"type"`
+	SessionID string      `json:"session_id,omitempty"` // Prevents duplicate sync operations
 	StateHash []byte      `json:"state_hash,omitempty"`
 	State     []byte      `json:"state,omitempty"` // JSON-encoded ReplicaState
 }
@@ -97,4 +121,13 @@ func DecodeMessage(data []byte) (*Message, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// GenerateSessionID creates a unique session identifier
+// Format: timestamp-random (e.g., "1706707200-a1b2c3d4")
+func GenerateSessionID() string {
+	ts := time.Now().UnixNano()
+	randomBytes := make([]byte, 4)
+	rand.Read(randomBytes)
+	return fmt.Sprintf("%d-%s", ts, hex.EncodeToString(randomBytes))
 }

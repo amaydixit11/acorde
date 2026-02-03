@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	gosync "sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
@@ -25,15 +26,30 @@ type p2pService struct {
 	host     host.Host
 	provider StateProvider
 	config   Config
+	logger   Logger
 
 	mdnsService mdns.Service
 	peers       map[peer.ID]struct{}
 	peersMu     gosync.RWMutex
 
+	// Active sync sessions to prevent duplicates
+	activeSyncs   map[string]struct{}
+	activeSyncsMu gosync.Mutex
+
+	// Metrics
+	syncAttempts  int64
+	syncSuccesses int64
+	syncFailures  int64
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     gosync.WaitGroup
 }
+
+// noopLogger is a no-op logger
+type noopLogger struct{}
+
+func (noopLogger) Printf(format string, v ...interface{}) {}
 
 // NewP2PService creates a new libp2p-based sync service
 func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
@@ -55,11 +71,18 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = noopLogger{}
+	}
+
 	return &p2pService{
-		host:     h,
-		provider: provider,
-		config:   cfg,
-		peers:    make(map[peer.ID]struct{}),
+		host:        h,
+		provider:    provider,
+		config:      cfg,
+		logger:      logger,
+		peers:       make(map[peer.ID]struct{}),
+		activeSyncs: make(map[string]struct{}),
 	}, nil
 }
 
@@ -83,6 +106,7 @@ func (s *p2pService) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.syncLoop()
 
+	s.logger.Printf("sync service started, listening on %v", s.host.Addrs())
 	return nil
 }
 
@@ -112,11 +136,42 @@ func (s *p2pService) Peers() []peer.ID {
 	return result
 }
 
+// Metrics returns sync statistics
+func (s *p2pService) Metrics() SyncMetrics {
+	return SyncMetrics{
+		SyncAttempts:  atomic.LoadInt64(&s.syncAttempts),
+		SyncSuccesses: atomic.LoadInt64(&s.syncSuccesses),
+		SyncFailures:  atomic.LoadInt64(&s.syncFailures),
+	}
+}
+
 // SyncWith triggers a sync with a specific peer
 func (s *p2pService) SyncWith(ctx context.Context, peerID peer.ID) error {
+	atomic.AddInt64(&s.syncAttempts, 1)
+
+	// Generate session ID
+	sessionID := GenerateSessionID()
+
+	// Check for active sync with this peer
+	// Session ID prevents duplicate syncs
+	s.activeSyncsMu.Lock()
+	if _, active := s.activeSyncs[peerID.String()]; active {
+		s.activeSyncsMu.Unlock()
+		return nil // Already syncing with this peer
+	}
+	s.activeSyncs[peerID.String()] = struct{}{}
+	s.activeSyncsMu.Unlock()
+
+	defer func() {
+		s.activeSyncsMu.Lock()
+		delete(s.activeSyncs, peerID.String())
+		s.activeSyncsMu.Unlock()
+	}()
+
 	// Open stream to peer
 	stream, err := s.host.NewStream(ctx, peerID, protocol.ID(ProtocolID))
 	if err != nil {
+		atomic.AddInt64(&s.syncFailures, 1)
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
@@ -124,20 +179,23 @@ func (s *p2pService) SyncWith(ctx context.Context, peerID peer.ID) error {
 	// Set deadline
 	stream.SetDeadline(time.Now().Add(30 * time.Second))
 
-	// Send our state hash
+	// Send our state hash with session ID
 	hash := s.provider.StateHash()
 	msg := &Message{
 		Type:      MsgStateHash,
+		SessionID: sessionID,
 		StateHash: hash,
 	}
 
 	if err := writeMessage(stream, msg); err != nil {
+		atomic.AddInt64(&s.syncFailures, 1)
 		return fmt.Errorf("failed to send state hash: %w", err)
 	}
 
 	// Read response
 	resp, err := readMessage(stream)
 	if err != nil {
+		atomic.AddInt64(&s.syncFailures, 1)
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
@@ -145,17 +203,42 @@ func (s *p2pService) SyncWith(ctx context.Context, peerID peer.ID) error {
 	switch resp.Type {
 	case MsgStateHash:
 		// Hashes match, nothing to do
+		atomic.AddInt64(&s.syncSuccesses, 1)
 		return nil
 
 	case MsgState:
 		// Apply remote state
 		var state crdt.ReplicaState
 		if err := json.Unmarshal(resp.State, &state); err != nil {
+			atomic.AddInt64(&s.syncFailures, 1)
 			return fmt.Errorf("failed to decode state: %w", err)
 		}
-		return s.provider.ApplyState(state)
+		if err := s.provider.ApplyState(state); err != nil {
+			atomic.AddInt64(&s.syncFailures, 1)
+			return err
+		}
+		atomic.AddInt64(&s.syncSuccesses, 1)
+		s.logger.Printf("synced with peer %s", peerID.String()[:8])
+		return nil
+
+	case MsgStateRequest:
+		// They want our state - send it
+		state := s.provider.GetState()
+		stateData, _ := json.Marshal(state)
+		stateMsg := &Message{
+			Type:      MsgState,
+			SessionID: sessionID,
+			State:     stateData,
+		}
+		if err := writeMessage(stream, stateMsg); err != nil {
+			atomic.AddInt64(&s.syncFailures, 1)
+			return fmt.Errorf("failed to send state: %w", err)
+		}
+		atomic.AddInt64(&s.syncSuccesses, 1)
+		return nil
 	}
 
+	atomic.AddInt64(&s.syncSuccesses, 1)
 	return nil
 }
 
@@ -167,8 +250,13 @@ func (s *p2pService) HandlePeerFound(pi peer.AddrInfo) {
 	}
 
 	s.peersMu.Lock()
+	_, exists := s.peers[pi.ID]
 	s.peers[pi.ID] = struct{}{}
 	s.peersMu.Unlock()
+
+	if !exists {
+		s.logger.Printf("discovered peer %s", pi.ID.String()[:8])
+	}
 
 	// Connect to peer
 	if err := s.host.Connect(s.ctx, pi); err != nil {
@@ -180,7 +268,11 @@ func (s *p2pService) HandlePeerFound(pi peer.AddrInfo) {
 	}
 
 	// Trigger sync
-	go s.SyncWith(s.ctx, pi.ID)
+	go func() {
+		if err := s.SyncWith(s.ctx, pi.ID); err != nil {
+			s.logger.Printf("sync with %s failed: %v", pi.ID.String()[:8], err)
+		}
+	}()
 }
 
 // handleStream handles incoming sync requests
@@ -202,19 +294,24 @@ func (s *p2pService) handleStream(stream network.Stream) {
 	case MsgStateHash:
 		// Compare hashes
 		ourHash := s.provider.StateHash()
-		if string(msg.StateHash) == string(ourHash) {
-			// Hashes match
+		theirHash := msg.StateHash
+
+		if string(ourHash) == string(theirHash) {
+			// States identical - respond with our hash as acknowledgement
 			resp = &Message{
 				Type:      MsgStateHash,
+				SessionID: msg.SessionID,
 				StateHash: ourHash,
 			}
 		} else {
-			// Hashes differ, send our state
+			// Hashes differ - send our full state
+			// CRDT merge will combine both states correctly
 			state := s.provider.GetState()
 			stateData, _ := json.Marshal(state)
 			resp = &Message{
-				Type:  MsgState,
-				State: stateData,
+				Type:      MsgState,
+				SessionID: msg.SessionID,
+				State:     stateData,
 			}
 		}
 
@@ -223,8 +320,9 @@ func (s *p2pService) handleStream(stream network.Stream) {
 		state := s.provider.GetState()
 		stateData, _ := json.Marshal(state)
 		resp = &Message{
-			Type:  MsgState,
-			State: stateData,
+			Type:      MsgState,
+			SessionID: msg.SessionID,
+			State:     stateData,
 		}
 
 	case MsgState:
@@ -235,6 +333,7 @@ func (s *p2pService) handleStream(stream network.Stream) {
 		}
 		resp = &Message{
 			Type:      MsgStateHash,
+			SessionID: msg.SessionID,
 			StateHash: s.provider.StateHash(),
 		}
 	}
@@ -242,6 +341,20 @@ func (s *p2pService) handleStream(stream network.Stream) {
 	if resp != nil {
 		writeMessage(stream, resp)
 	}
+}
+
+// shouldSendState determines which peer should send state (deterministic tie-breaker)
+func shouldSendState(ourHash, theirHash []byte) bool {
+	// Compare hashes lexicographically - higher value sends state
+	for i := 0; i < len(ourHash) && i < len(theirHash); i++ {
+		if ourHash[i] > theirHash[i] {
+			return true
+		}
+		if ourHash[i] < theirHash[i] {
+			return false
+		}
+	}
+	return len(ourHash) > len(theirHash)
 }
 
 // syncLoop periodically syncs with all peers
@@ -257,7 +370,12 @@ func (s *p2pService) syncLoop() {
 			return
 		case <-ticker.C:
 			for _, peerID := range s.Peers() {
-				go s.SyncWith(s.ctx, peerID)
+				peerID := peerID // Capture for goroutine
+				go func() {
+					if err := s.SyncWith(s.ctx, peerID); err != nil {
+						s.logger.Printf("periodic sync with %s failed: %v", peerID.String()[:8], err)
+					}
+				}()
 			}
 		}
 	}

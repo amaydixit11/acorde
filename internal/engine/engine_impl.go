@@ -244,6 +244,31 @@ func (e *engineImpl) ApplyRemotePayload(payload []byte) error {
 	return nil
 }
 
+// GetSyncState returns the current CRDT state (implements sync.Syncable)
+func (e *engineImpl) GetSyncState() crdt.ReplicaState {
+	return e.replica.State()
+}
+
+// ApplySyncState applies remote CRDT state and merges (implements sync.Syncable)
+func (e *engineImpl) ApplySyncState(state crdt.ReplicaState) error {
+	// Create temporary replica with received state
+	tempClock := core.NewClockWithTime(state.ClockTime)
+	tempReplica := crdt.NewReplica(tempClock)
+	tempReplica.LoadState(state)
+
+	// Merge into our replica
+	e.replica.Merge(tempReplica)
+
+	// Persist merged state to storage
+	for _, entry := range e.replica.ListEntries() {
+		if err := e.store.Put(entry); err != nil {
+			return fmt.Errorf("failed to persist merged entry: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Close releases all resources
 func (e *engineImpl) Close() error {
 	return e.store.Close()
