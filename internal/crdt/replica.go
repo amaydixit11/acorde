@@ -41,10 +41,15 @@ func (r *Replica) HydrateEntry(entry core.Entry) {
 
 // AddEntry adds a new entry to the replica.
 func (r *Replica) AddEntry(entryType core.EntryType, content []byte, tags []string) core.Entry {
+	return r.AddEntryWithID(uuid.New(), entryType, content, tags)
+}
+
+// AddEntryWithID adds a new entry with a specific ID.
+func (r *Replica) AddEntryWithID(id uuid.UUID, entryType core.EntryType, content []byte, tags []string) core.Entry {
 	timestamp := r.clock.Tick()
 
 	entry := core.Entry{
-		ID:        uuid.New(),
+		ID:        id,
 		Type:      entryType,
 		Content:   content,
 		Tags:      []string{}, // Tags managed separately via OR-Set

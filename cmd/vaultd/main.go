@@ -11,8 +11,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"path/filepath"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/vaultd/internal/crypto"
 	"github.com/amaydixit11/vaultd/internal/sync"
 	"github.com/amaydixit11/vaultd/pkg/engine"
 	"github.com/google/uuid"
@@ -34,6 +36,8 @@ func main() {
 		cmdInvite(args)
 	case "pair":
 		cmdPair(args)
+	case "init":
+		cmdInit(args)
 	case "add", "get", "list", "update", "delete":
 		runWithEngine(cmd, args)
 	case "help":
@@ -59,6 +63,10 @@ Commands:
   delete   Delete an entry
   help     Show this help
 
+Encryption:
+  vaultd init   Initialize new encrypted vault
+  vaultd unlock Unlock vault (if using encrypted file)
+
 Daemon Mode:
   vaultd daemon --name node1 --data ~/.vaultd-node1
   vaultd daemon --name node2 --data ~/.vaultd-node2
@@ -72,7 +80,38 @@ Entry Commands:
 }
 
 func runWithEngine(cmd string, args []string) {
-	e, err := engine.New(engine.Config{})
+	// 1. Determine data dir
+	// We need to parse args manually or peek at them because flag.Parse consumes them
+	// For simplicity, we assume default data dir if not specified, 
+	// OR we enforce standard flag usage. Let's stick to default.
+	home, _ := os.UserHomeDir()
+	dataDir := filepath.Join(home, ".vaultd") 
+	
+	// Check for custom data dir in args (simple check)
+	for i, arg := range args {
+		if arg == "--data" && i+1 < len(args) {
+			dataDir = args[i+1]
+			break
+		}
+	}
+
+	cfg := engine.Config{DataDir: dataDir}
+
+	// 2. Unlock if needed
+	keyStore := crypto.NewFileKeyStore(dataDir)
+	if keyStore.IsInitialized() {
+		fmt.Printf("🔒 Vault is encrypted. Enter password: ")
+		password, _ := readPassword() // implemented below
+		key, err := keyStore.Unlock(password)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.EncryptionKey = &key
+		fmt.Println("") 
+	}
+
+	e, err := engine.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -404,4 +443,48 @@ func cmdPair(args []string) {
 
 	fmt.Printf("✅ Successfully paired and connected!\n")
 	fmt.Printf("Peer added to allowlist. Start daemon to begin syncing.\n")
+}
+
+func cmdInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	dataDir := fs.String("data", "", "Data directory")
+	fs.Parse(args)
+
+	dir := *dataDir
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".vaultd")
+	}
+
+	store := crypto.NewFileKeyStore(dir)
+	if store.IsInitialized() {
+		fmt.Println("Vault already initialized.")
+		return
+	}
+
+	fmt.Printf("Enter new password: ")
+	pass1, _ := readPassword()
+	fmt.Printf("\nConfirm password: ")
+	pass2, _ := readPassword()
+	fmt.Println("")
+
+	if string(pass1) != string(pass2) {
+		fmt.Println("Passwords do not match!")
+		os.Exit(1)
+	}
+
+	if err := store.Initialize(pass1); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Vault initialized at %s\n", dir)
+}
+
+func readPassword() ([]byte, error) {
+	// Simple stdin reader for now
+	// Ideally use terminal.ReadPassword
+	var password string
+	fmt.Scanln(&password)
+	return []byte(password), nil
 }
