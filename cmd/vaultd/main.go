@@ -16,7 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
-	"github.com/amaydixit11/vaultd/internal/crypto"
+	"github.com/amaydixit11/vaultd/pkg/crypto"
 	"github.com/amaydixit11/vaultd/internal/sync"
 	"github.com/amaydixit11/vaultd/pkg/engine"
 	"github.com/google/uuid"

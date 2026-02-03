@@ -8,7 +8,7 @@ import (
 
 	"github.com/amaydixit11/vaultd/internal/core"
 	"github.com/amaydixit11/vaultd/internal/crdt"
-	"github.com/amaydixit11/vaultd/internal/crypto"
+	"github.com/amaydixit11/vaultd/pkg/crypto"
 	"github.com/amaydixit11/vaultd/internal/storage"
 	"github.com/amaydixit11/vaultd/internal/storage/sqlite"
 	"github.com/google/uuid"
@@ -18,7 +18,7 @@ import (
 type Config struct {
 	DataDir       string
 	InMemory      bool
-	EncryptionKey interface{} // *crypto.Key or nil
+	EncryptionKey *crypto.Key // *crypto.Key or nil
 }
 
 // EntryType is re-exported from core for use by pkg/engine wrapper
@@ -139,11 +139,7 @@ func New(cfg Config) (Engine, error) {
 
 	var key *crypto.Key
 	if cfg.EncryptionKey != nil {
-		k, ok := cfg.EncryptionKey.(*crypto.Key)
-		if !ok {
-			return nil, fmt.Errorf("invalid encryption key type: expected *crypto.Key, got %T", cfg.EncryptionKey)
-		}
-		key = k
+		key = cfg.EncryptionKey
 	}
 
 	return &engineImpl{

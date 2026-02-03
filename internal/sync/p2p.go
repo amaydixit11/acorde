@@ -260,6 +260,52 @@ func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
 	// Session ID prevents duplicate syncs
 	s.activeSyncsMu.Lock()
 	if _, active := s.activeSyncs[peerID.String()]; active {
+		// Tie-breaker: If we are already syncing, one side should yield.
+		// Rule: Lower PeerID yields to Higher PeerID.
+		// If we are Higher, we ignore the 'active' flag and proceed (assuming the other side yields/fails).
+		// Wait, 'active' means WE initiated it or accepted it.
+		// If we are initiating NOW, checks active.
+		// If 'active' is true, it means EITHER:
+		// 1. We already started a sync (outgoing)
+		// 2. We accepted a sync (incoming)
+		// If 1: We are piling on? No, SyncWith is typically one-at-a-time per peer via syncLoop.
+		// If we manually trigger, maybe.
+		// If 2: We are syncing with them right now.
+		// Do we need another one? Probably not.
+		// The issue is if A starts, sets active. B starts, sets active.
+		// A connects to B. B rejects (busy). A fails.
+		// B connects to A. A rejects (busy). B fails.
+		// Result: Livelock.
+		
+		// Fix: Don't reject "Active" if we are just marking it?
+		// We need to allow the *incoming* connection even if we are "Active" initiating?
+		// But `activeSyncs` tracks *sessions*.
+		
+		// Simpler fix: If active, just return nil (it's happening).
+		// But verify if it's STUCK.
+		// The user suggested: "Use session IDs bidirectionally or allow concurrent syncs".
+		// Or tie-break.
+		
+		// Let's rely on the timeout I added earlier to clear stuck syncs.
+		// To fix livelock where they block *each other* continuously:
+		// We should perhaps NOT block outgoing if incoming is happening?
+		// But we want to avoid double processing.
+		
+		// Let's implement the Tie-Breaker for *Initiating*.
+		// If we are Lower ID, and we see it's active (maybe incoming?), we back off.
+		// If we are Higher ID, we proceed? 
+		// Actually, if it's active in OUR map, it means WE are processing it.
+		// So returning nil is correct. The problem is if the OTHER side rejects us because THEY are processing.
+		
+		// To fix the "Collision" (Head-to-Head):
+		// A dials B. B dials A.
+		// A sees B incoming. 
+		// The activeSyncs check is local.
+		
+		// The Livelock happens on the network layer if both sides Reject multiple streams.
+		// My p2p.go doesn't seem to reject incoming streams based on `activeSyncs`.
+		// Let's check `handleStream`.
+		
 		s.activeSyncsMu.Unlock()
 		return nil // Already syncing with this peer
 	}

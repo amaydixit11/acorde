@@ -113,9 +113,7 @@ type Config struct {
 	InMemory bool
 
 	// EncryptionKey is the key for encrypting entry content.
-	// It should be of type *crypto.Key.
-	// New() will return an error if the type is incorrect.
-	EncryptionKey interface{}
+	EncryptionKey *crypto.Key
 }
 
 // New creates a new vaultd Engine with the given configuration.

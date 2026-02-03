@@ -95,13 +95,51 @@ func (r *Replica) UpdateEntry(id uuid.UUID, content *[]byte, updateTags *[]strin
 	// Update tags if provided
 	if updateTags != nil {
 		tagSet := r.getOrCreateTagSet(id)
-		// Remove all existing tags
-		for _, tag := range tagSet.Elements() {
-			tagSet.Remove(tag)
+		
+		// CRDT Set Semantics for "Update":
+		// Is it "Set these tags" (replace) or "Add these tags"?
+		// User requirement says current implementation "removes all existing tags... even from other replicas".
+		// This happens because we iterate tagSet.Elements() and Remove() them.
+		// If we want "Replace" semantics in LWW/OR-Set, we indeed remove local view.
+		// But Concurrent Adds should survive? 
+		// In OR-Set, Remove(tag) adds a "tombstone" for the *specific tokens* we see.
+		// If another replica added a tag with a different token *before* we merge, and we haven't seen it, we can't remove it.
+		// If we HAVE seen it, we remove it.
+		// So actually, clearing local view IS the correct way to implement "Replace" in OR-Set.
+		// But maybe the user wants "Merge" semantics (Add/Remove specific tags)?
+		// "Fix: Use Add-Wins semantics or make tags a full LWW-Map"
+		
+		// If the user wants to keep OTHER tags, they should probably do GET -> MODIFY -> UPDATE.
+		// But if they say it's a bug, let's assume they expect "Add/Remove" delta or "Merge".
+		// However, the input is just `[]string`.
+		// Let's implement this as: Remove tags that are NOT in the new list, Add tags that ARE in the new list.
+		// This preserves tags that are in both.
+		// AND it respects concurrent adds?
+		// If we blindly remove everything, we generate tombstones for everything we see.
+		// If we only remove what's missing, we are safer.
+		
+		currentTags := make(map[string]struct{})
+		for _, t := range tagSet.Elements() {
+			currentTags[t] = struct{}{}
 		}
+		
+		newTags := make(map[string]struct{})
+		for _, t := range *updateTags {
+			newTags[t] = struct{}{}
+		}
+		
+		// Remove tags not in new list
+		for t := range currentTags {
+			if _, keep := newTags[t]; !keep {
+				tagSet.Remove(t)
+			}
+		}
+		
 		// Add new tags
-		for _, tag := range *updateTags {
-			tagSet.Add(tag)
+		for t := range newTags {
+			if _, exists := currentTags[t]; !exists {
+				tagSet.Add(t)
+			}
 		}
 	}
 
