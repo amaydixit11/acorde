@@ -175,8 +175,23 @@ func New(cfg Config) (Engine, error) {
 	}
 
 	// Initialize ACL Store
-	// For now using random UUID as peerID if not provided (should be consistent in real app)
-	localPeerID := uuid.New().String() 
+	var localPeerID string
+	nodeIDPath := filepath.Join(filepath.Dir(dbPath), "node_id")
+	
+	if idBytes, err := os.ReadFile(nodeIDPath); err == nil {
+		localPeerID = string(idBytes)
+	} else {
+		// Generate new ID and persist
+		localPeerID = uuid.New().String()
+		if err := os.WriteFile(nodeIDPath, []byte(localPeerID), 0644); err != nil {
+			// Warn but proceed? Or fail? Better to fail if persistence is required.
+			// But for now, let's just log or ignore? 
+			// User expects persistence, so let's try to write. 
+			// If we can't write, maybe we can't run.
+			return nil, fmt.Errorf("failed to persist node_id: %w", err)
+		}
+	}
+
 	aclStore, err := acl.NewStore(store.GetDB(), localPeerID)
 	if err != nil {
 		store.Close()
