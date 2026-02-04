@@ -17,12 +17,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// ProtocolID is the libp2p protocol identifier for acorde sync
-const ProtocolID = "/acorde/sync/1.0.0"
-
-// ServiceName is the mDNS service name for discovery
-const ServiceName = "acorde"
-
 // Config contains configuration for the SyncService
 type Config struct {
 	// ListenAddrs are the multiaddrs to listen on

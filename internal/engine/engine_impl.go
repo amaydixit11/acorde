@@ -9,6 +9,7 @@ import (
 
 	"github.com/amaydixit11/acorde/internal/acl"
 	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/hooks"
 	"github.com/amaydixit11/acorde/internal/crdt"
 	"github.com/amaydixit11/acorde/internal/schema"
 	"github.com/amaydixit11/acorde/internal/version"

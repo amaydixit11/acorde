@@ -101,7 +101,7 @@ For efficiency, acorde supports delta synchronization:
 ## 5. API Layer
 
 ### REST API
-HTTP server on configurable port (default: 8080).
+HTTP server on configurable port (default: 7331).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

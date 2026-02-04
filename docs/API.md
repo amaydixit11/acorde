@@ -6,7 +6,7 @@ Complete reference for the Acorde REST API and Go library.
 
 Start the server:
 ```bash
-./acorde serve --port 8080
+./acorde serve --port 7331
 ```
 
 ### Endpoints

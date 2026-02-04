@@ -65,7 +65,7 @@ Usage: acorde <command> [options]
 
 Commands:
   daemon   Start sync daemon (auto-discovers peers on LAN)
-  serve    Start REST API server (--port 8080)
+  serve    Start REST API server (--port 7331)
   status   Show vault status (entry count, sync state)
   export   Export all entries to JSON
   add      Add a new entry
@@ -684,7 +684,7 @@ func cmdExport(args []string) {
 func cmdServe(args []string) {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, ".acorde")
-	port := "8080"
+	port := "7331"
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {

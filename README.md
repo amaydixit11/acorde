@@ -29,7 +29,7 @@
 
 ### API
 - **Go Library**: Embed `pkg/engine` in your application.
-- **REST API**: `acorde serve --port 8080` for any language.
+- **REST API**: `acorde serve --port 7331` for any language.
 - **Event Subscriptions**: Real-time change notifications via SSE.
 - **Query Language**: Filter entries with `type = "note" AND tags CONTAINS "work"`.
 - **Full-Text Search**: Search content with Bleve (pure Go).
@@ -70,16 +70,16 @@ acorde list --type note
 
 ```bash
 # Start REST server
-acorde serve --port 8080
+acorde serve --port 7331
 
 # Use from any language
-curl http://localhost:8080/entries
-curl -X POST http://localhost:8080/entries \
+curl http://localhost:7331/entries
+curl -X POST http://localhost:7331/entries \
   -H "Content-Type: application/json" \
   -d '{"type":"note","content":"Hello from API","tags":["test"]}'
 
 # Real-time events (SSE)
-curl http://localhost:8080/events
+curl http://localhost:7331/events
 ```
 
 ### Library Mode
@@ -236,7 +236,7 @@ acorde pair "acorde://..."
 ```mermaid
 graph TD
     User[User / App] --> API[pkg/engine]
-    User --> REST[REST API :8080]
+    User --> REST[REST API :7331]
     
     subgraph Engine
         API --> CRDT[CRDT Replica]

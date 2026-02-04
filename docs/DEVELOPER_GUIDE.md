@@ -32,7 +32,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                      Your Application                        │
 ├─────────────────────────────────────────────────────────────┤
-│                     ACORDE REST API (:8080)                  │
+│                     ACORDE REST API (:7331)                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Engine  │  CRDT  │  Search  │  Blobs  │  ACL  │  Hooks    │
 ├─────────────────────────────────────────────────────────────┤
@@ -53,7 +53,7 @@
 acorde init
 
 # Start the REST API server
-acorde serve --port 8080
+acorde serve --port 7331
 
 # Or start the P2P sync daemon
 acorde daemon
@@ -62,7 +62,7 @@ acorde daemon
 ### 2. Create an Entry via REST
 
 ```bash
-curl -X POST http://localhost:8080/entries \
+curl -X POST http://localhost:7331/entries \
   -H "Content-Type: application/json" \
   -d '{
     "type": "note",
@@ -74,16 +74,16 @@ curl -X POST http://localhost:8080/entries \
 ### 3. List Entries
 
 ```bash
-curl http://localhost:8080/entries
-curl http://localhost:8080/entries?type=note
-curl http://localhost:8080/entries?tag=demo
+curl http://localhost:7331/entries
+curl http://localhost:7331/entries?type=note
+curl http://localhost:7331/entries?tag=demo
 ```
 
 ---
 
 ## REST API Reference
 
-Base URL: `http://localhost:8080`
+Base URL: `http://localhost:7331`
 
 ### Endpoints
 
@@ -147,7 +147,7 @@ Base URL: `http://localhost:8080`
 Connect to receive real-time updates:
 
 ```javascript
-const events = new EventSource('http://localhost:8080/events');
+const events = new EventSource('http://localhost:7331/events');
 events.onmessage = (e) => {
   const event = JSON.parse(e.data);
   console.log(event.type, event.entry_id);
@@ -517,7 +517,7 @@ engine.Config{
 | Variable | Description |
 |----------|-------------|
 | `ACORDE_DATA_DIR` | Override default data directory |
-| `ACORDE_PORT` | REST API port (default: 8080) |
+| `ACORDE_PORT` | REST API port (default: 7331) |
 
 ---
 
