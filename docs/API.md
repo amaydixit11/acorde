@@ -1,12 +1,12 @@
-# vaultd API Reference
+# Acorde API Reference
 
-Complete reference for the vaultd REST API and Go library.
+Complete reference for the Acorde REST API and Go library.
 
 ## REST API
 
 Start the server:
 ```bash
-./vaultd serve --port 8080
+./acorde serve --port 8080
 ```
 
 ### Endpoints
@@ -42,12 +42,12 @@ Content-Type: application/json
 
 ### Installation
 ```bash
-go get github.com/amaydixit11/vaultd/pkg/engine
+go get github.com/amaydixit11/acorde/pkg/engine
 ```
 
 ### Basic Lifecycle
 ```go
-import "github.com/amaydixit11/vaultd/pkg/engine"
+import "github.com/amaydixit11/acorde/pkg/engine"
 
 // Initialize
 e, _ := engine.New(engine.Config{
@@ -104,7 +104,7 @@ hooks.OnCreate(func(e engine.HookEvent) {
 
 #### Multi-Vault
 ```go
-mgr, _ := engine.NewVaultManager("~/.vaultd")
+mgr, _ := engine.NewVaultManager("~/.acorde")
 workVault, _ := mgr.Create("work")
 mgr.SetActive("work")
 ```

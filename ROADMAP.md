@@ -1,8 +1,8 @@
-# vaultd Roadmap
+# Acorde Roadmap
 
 ## Current Status: Phase 8 Complete ✅
 
-**vaultd** is a production-ready engine with P2P sync, encryption, history tracking, and access control.
+**Acorde** is a production-ready engine with P2P sync, encryption, history tracking, and access control.
 
 ## Completed Phases
 

@@ -1,13 +1,13 @@
-# Contributing to vaultd
+# Contributing to Acorde
 
-Thank you for your interest in contributing to **vaultd**!
+Thank you for your interest in contributing to **Acorde**!
 
 ## Development Setup
 
 ```bash
 # Clone
-git clone https://github.com/amaydixit11/vaultd.git
-cd vaultd
+git clone https://github.com/amaydixit11/acorde.git
+cd acorde
 
 # Install dependencies
 go mod download
@@ -19,7 +19,7 @@ go test ./...
 ## Code Organization
 
 ```
-vaultd/
+acorde/
 ├── pkg/                  # Public API
 │   ├── engine/           # Engine, Query, Search, Features
 │   ├── api/              # REST API
@@ -34,7 +34,7 @@ vaultd/
 │   ├── version/          # History Tracking
 │   ├── acl/              # Access Control
 │   └── hooks/            # Webhooks
-├── cmd/vaultd/           # Daemon CLI
+├── cmd/acorde/           # Daemon CLI
 └── docs/                 # Documentation
 ```
 

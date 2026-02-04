@@ -1,6 +1,6 @@
-# vaultd
+# Acorde
 
-**vaultd** is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
+**Acorde** (formerly vaultd) is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg?logo=go)
@@ -27,7 +27,7 @@
 
 ### API
 - **Go Library**: Embed `pkg/engine` in your application.
-- **REST API**: `vaultd serve --port 8080` for any language.
+- **REST API**: `acorde serve --port 8080` for any language.
 - **Event Subscriptions**: Real-time change notifications via SSE.
 - **Query Language**: Filter entries with `type = "note" AND tags CONTAINS "work"`.
 - **Full-Text Search**: Search content with Bleve (pure Go).
@@ -40,12 +40,12 @@
 
 ```bash
 # Install CLI
-go install github.com/amaydixit11/vaultd/cmd/vaultd@latest
+go install github.com/amaydixit11/acorde/cmd/acorde@latest
 
 # Or build from source
-git clone https://github.com/amaydixit11/vaultd.git
-cd vaultd/cmd/vaultd
-go build -o vaultd .
+git clone https://github.com/amaydixit11/acorde.git
+cd acorde/cmd/acorde
+go build -o acorde .
 ```
 
 ## 🚀 Quick Start
@@ -54,21 +54,21 @@ go build -o vaultd .
 
 ```bash
 # Initialize encrypted vault
-vaultd init
+acorde init
 
 # Start sync daemon (P2P)
-vaultd daemon
+acorde daemon
 
 # Add data
-vaultd add --type note --content "Hello World" --tags work,important
-vaultd list --type note
+acorde add --type note --content "Hello World" --tags work,important
+acorde list --type note
 ```
 
 ### REST API Mode
 
 ```bash
 # Start REST server
-vaultd serve --port 8080
+acorde serve --port 8080
 
 # Use from any language
 curl http://localhost:8080/entries
@@ -87,8 +87,8 @@ package main
 
 import (
     "log"
-    "github.com/amaydixit11/vaultd/pkg/engine"
-    "github.com/amaydixit11/vaultd/pkg/crypto"
+    "github.com/amaydixit11/acorde/pkg/engine"
+    "github.com/amaydixit11/acorde/pkg/crypto"
 )
 
 func main() {
@@ -219,13 +219,13 @@ key, _ := sharing.RecoverSharedKey(share, entryID, alicePrivate, senderPublic)
 
 **Device A:**
 ```bash
-vaultd invite --share-key
+acorde invite --share-key
 # Shows QR code + invite URL
 ```
 
 **Device B:**
 ```bash
-vaultd pair "vaultd://..."
+acorde pair "acorde://..."
 # Imports encryption key
 ```
 
@@ -258,8 +258,8 @@ graph TD
 ## 📂 Project Structure
 
 ```
-vaultd/
-├── cmd/vaultd/          # CLI application
+acorde/
+├── cmd/acorde/          # CLI application
 ├── pkg/
 │   ├── engine/          # Public API (Engine, Query, Search, Blob, Sharing)
 │   ├── api/             # REST API server
