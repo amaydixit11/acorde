@@ -52,35 +52,28 @@ go build -o acorde .
 
 ## 🚀 Quick Start
 
-### CLI Mode
+### Quick Start (Unified Mode)
+
+The best way to run ACORDE is to use the `daemon` command with the `--api-port` flag. This runs both the P2P sync engine and the REST API in a single process, ensuring real-time consistency.
 
 ```bash
-# Initialize encrypted vault
-acorde init
+# Start Daemon + API
+acorde daemon --port 4001 --api-port 7331
 
-# Start sync daemon (P2P)
-acorde daemon
-
-# Add data
-acorde add --type note --content "Hello World" --tags work,important
-acorde list --type note
-```
-
-### REST API Mode
-
-```bash
-# Start REST server
-acorde serve --port 7331
-
-# Use from any language
+# Now you can use the API
 curl http://localhost:7331/entries
-curl -X POST http://localhost:7331/entries \
-  -H "Content-Type: application/json" \
-  -d '{"type":"note","content":"Hello from API","tags":["test"]}'
-
-# Real-time events (SSE)
-curl http://localhost:7331/events
+curl -X POST http://localhost:7331/entries -d '{"type":"note","content":"Hello"}'
 ```
+
+Nodes paired with this daemon will receive "Hello" instantly.
+
+### CLI Only
+```bash
+acorde init
+acorde add --type note --content "Hello World"
+```
+
+### Library Mode
 
 ### Library Mode
 

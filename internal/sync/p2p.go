@@ -464,8 +464,8 @@ func (s *p2pService) handleStream(stream network.Stream) {
 				SessionID: msg.SessionID,
 				StateHash: ourHash,
 			}
-		} else {
 			// Hashes differ - send our full state
+			
 			// CRDT merge will combine both states correctly
 			state := s.provider.GetState()
 			stateData, _ := json.Marshal(state)

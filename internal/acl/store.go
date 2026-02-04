@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/google/uuid"
 )
 
@@ -19,14 +20,6 @@ const (
 	PermAdmin
 )
 
-// ACL represents access control for an entry
-type ACL struct {
-	EntryID uuid.UUID `json:"entry_id"`
-	Owner   string    `json:"owner"`              // PeerID of owner
-	Readers []string  `json:"readers,omitempty"`  // PeerIDs with read access
-	Writers []string  `json:"writers,omitempty"`  // PeerIDs with write access
-	Public  bool      `json:"public"`              // Anyone can read
-}
 
 // Store manages ACLs in SQLite
 type Store struct {
@@ -63,7 +56,7 @@ func (s *Store) initSchema() error {
 }
 
 // SetACL sets the ACL for an entry
-func (s *Store) SetACL(acl ACL) error {
+func (s *Store) SetACL(acl core.ACL) error {
 	readersJSON, _ := json.Marshal(acl.Readers)
 	writersJSON, _ := json.Marshal(acl.Writers)
 	public := 0
@@ -80,8 +73,8 @@ func (s *Store) SetACL(acl ACL) error {
 }
 
 // GetACL retrieves the ACL for an entry
-func (s *Store) GetACL(entryID uuid.UUID) (*ACL, error) {
-	var acl ACL
+func (s *Store) GetACL(entryID uuid.UUID) (*core.ACL, error) {
+	var acl core.ACL
 	var entryIDStr string
 	var readersJSON, writersJSON []byte
 	var public int
@@ -94,7 +87,7 @@ func (s *Store) GetACL(entryID uuid.UUID) (*ACL, error) {
 
 	if err == sql.ErrNoRows {
 		// No ACL = public access
-		return &ACL{
+		return &core.ACL{
 			EntryID: entryID,
 			Owner:   "",
 			Public:  true,
@@ -116,6 +109,38 @@ func (s *Store) GetACL(entryID uuid.UUID) (*ACL, error) {
 func (s *Store) DeleteACL(entryID uuid.UUID) error {
 	_, err := s.db.Exec(`DELETE FROM entry_acl WHERE entry_id = ?`, entryID.String())
 	return err
+}
+
+// List returns all ACLs
+func (s *Store) List() ([]core.ACL, error) {
+	rows, err := s.db.Query(`
+		SELECT entry_id, owner, readers, writers, public
+		FROM entry_acl
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var acls []core.ACL
+	for rows.Next() {
+		var acl core.ACL
+		var entryIDStr string
+		var readersJSON, writersJSON []byte
+		var public int
+
+		if err := rows.Scan(&entryIDStr, &acl.Owner, &readersJSON, &writersJSON, &public); err != nil {
+			return nil, err
+		}
+
+		acl.EntryID, _ = uuid.Parse(entryIDStr)
+		json.Unmarshal(readersJSON, &acl.Readers)
+		json.Unmarshal(writersJSON, &acl.Writers)
+		acl.Public = public == 1
+		
+		acls = append(acls, acl)
+	}
+	return acls, nil
 }
 
 // CheckRead checks if a peer can read an entry
@@ -148,7 +173,7 @@ func (s *Store) CheckAdmin(entryID uuid.UUID, peerID string) (bool, error) {
 	return acl.Owner == peerID || acl.Owner == "", nil
 }
 
-func (s *Store) canRead(acl *ACL, peerID string) bool {
+func (s *Store) canRead(acl *core.ACL, peerID string) bool {
 	// Public entries are readable by all
 	if acl.Public {
 		return true
@@ -176,7 +201,7 @@ func (s *Store) canRead(acl *ACL, peerID string) bool {
 	return false
 }
 
-func (s *Store) canWrite(acl *ACL, peerID string) bool {
+func (s *Store) canWrite(acl *core.ACL, peerID string) bool {
 	// Owner can always write
 	if acl.Owner == peerID || acl.Owner == "" {
 		return true

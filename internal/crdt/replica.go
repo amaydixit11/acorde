@@ -10,6 +10,7 @@ import (
 type Replica struct {
 	entries *LWWSet                // LWW-Set of all entries
 	tags    map[uuid.UUID]*ORSet   // Entry ID → OR-Set of tags
+	acls    map[uuid.UUID]core.ACL // Entry ID → LWW ACL (ACL contains its own Timestamp)
 	clock   *core.Clock            // Lamport clock for this replica
 }
 
@@ -18,6 +19,7 @@ func NewReplica(clock *core.Clock) *Replica {
 	return &Replica{
 		entries: NewLWWSet(),
 		tags:    make(map[uuid.UUID]*ORSet),
+		acls:    make(map[uuid.UUID]core.ACL),
 		clock:   clock,
 	}
 }
@@ -186,6 +188,43 @@ func (r *Replica) ListEntries() []core.Entry {
 	return result
 }
 
+// SetACL updates the ACL for an entry using LWW rules.
+func (r *Replica) SetACL(acl core.ACL) {
+	// Ensure ACL has a timestamp (if 0, use current clock)
+	if acl.Timestamp == 0 {
+		acl.Timestamp = r.clock.Tick()
+	} else {
+		r.clock.Update(acl.Timestamp)
+	}
+
+	existing, exists := r.acls[acl.EntryID]
+	if !exists || acl.Timestamp > existing.Timestamp {
+		r.acls[acl.EntryID] = acl
+	} else if acl.Timestamp == existing.Timestamp {
+		// Tie-breaker: Lexicographical comparison of Owner string? 
+		// Or assume identical if timestamps match?
+		// For robustness, let's use Owner for determinism
+		if acl.Owner > existing.Owner {
+			r.acls[acl.EntryID] = acl
+		}
+	}
+}
+
+// GetACL returns the ACL for an entry
+func (r *Replica) GetACL(entryID uuid.UUID) (core.ACL, bool) {
+	acl, exists := r.acls[entryID]
+	return acl, exists
+}
+
+// ListACLs returns all known ACLs
+func (r *Replica) ListACLs() []core.ACL {
+	result := make([]core.ACL, 0, len(r.acls))
+	for _, acl := range r.acls {
+		result = append(result, acl)
+	}
+	return result
+}
+
 // Merge merges another replica's state into this one.
 // Both entries (LWW-Set) and tags (OR-Sets) are merged.
 //
@@ -210,6 +249,18 @@ func (r *Replica) Merge(other *Replica) {
 			r.tags[id] = otherTagSet.Clone()
 		}
 	}
+
+	// Merge ACLs (LWW)
+	for id, otherACL := range other.acls {
+		localACL, exists := r.acls[id]
+		if !exists || otherACL.Timestamp > localACL.Timestamp {
+			r.acls[id] = otherACL
+		} else if otherACL.Timestamp == localACL.Timestamp {
+			if otherACL.Owner > localACL.Owner {
+				r.acls[id] = otherACL
+			}
+		}
+	}
 }
 
 // MaxTimestamp returns the highest timestamp in this replica.
@@ -220,6 +271,12 @@ func (r *Replica) MaxTimestamp() uint64 {
 			max = elem.Timestamp
 		}
 	}
+	// Also check ACL timestamps
+	for _, acl := range r.acls {
+		if acl.Timestamp > max {
+			max = acl.Timestamp
+		}
+	}
 	return max
 }
 
@@ -228,11 +285,15 @@ func (r *Replica) Clone() *Replica {
 	clone := &Replica{
 		entries: r.entries.Clone(),
 		tags:    make(map[uuid.UUID]*ORSet),
+		acls:    make(map[uuid.UUID]core.ACL),
 		clock:   core.NewClockWithTime(r.clock.Now()),
 	}
 
 	for id, tagSet := range r.tags {
 		clone.tags[id] = tagSet.Clone()
+	}
+	for id, acl := range r.acls {
+		clone.acls[id] = acl.Clone()
 	}
 
 	return clone
@@ -243,6 +304,7 @@ func (r *Replica) State() ReplicaState {
 	return ReplicaState{
 		Entries:      r.entries.AllElements(),
 		Tags:         r.exportTags(),
+		ACLs:         r.acls,
 		ClockTime:    r.clock.Now(),
 	}
 }
@@ -267,6 +329,16 @@ func (r *Replica) LoadState(state ReplicaState) {
 			tagSet.removes[tt] = struct{}{}
 		}
 		r.tags[id] = tagSet
+	}
+
+	// Load ACLs
+	for id, acl := range state.ACLs {
+		r.SetACL(acl)
+		// Ensure map key matches entryID just in case
+		if acl.EntryID != id {
+			// Try to correct or warn?
+			// Just trust the map iteration
+		}
 	}
 }
 
@@ -312,6 +384,7 @@ func (r *Replica) exportTags() map[uuid.UUID]TagSetState {
 type ReplicaState struct {
 	Entries   []LWWElement              `json:"entries"`
 	Tags      map[uuid.UUID]TagSetState `json:"tags"`
+	ACLs      map[uuid.UUID]core.ACL    `json:"acls"`
 	ClockTime uint64                    `json:"clock_time"`
 }
 
@@ -357,6 +430,19 @@ func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
 	
 	// Collect tags for changed entries
 	tags := make(map[uuid.UUID]TagSetState)
+	
+	// Collect changed ACLs
+	acls := make(map[uuid.UUID]core.ACL)
+
+	// Optimisation: Only scan ALL if logic requires, but LWWSet doesn't index by time well.
+	// We iterated Entries above.
+	// For ACLs, we iterate all and check timestamp
+	for id, acl := range r.acls {
+		if acl.Timestamp > since {
+			acls[id] = acl
+		}
+	}
+
 	for _, elem := range entries {
 		if tagSet, ok := r.tags[elem.Entry.ID]; ok {
 			tags[elem.Entry.ID] = TagSetState{
@@ -369,6 +455,7 @@ func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
 	return DeltaReplicaState{
 		Entries:   entries,
 		Tags:      tags,
+		ACLs:      acls,
 		ClockTime: r.clock.Now(),
 		Since:     since,
 	}
@@ -378,6 +465,7 @@ func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
 type DeltaReplicaState struct {
 	Entries   []LWWElement              `json:"entries"`
 	Tags      map[uuid.UUID]TagSetState `json:"tags"`
+	ACLs      map[uuid.UUID]core.ACL    `json:"acls"`
 	ClockTime uint64                    `json:"clock_time"`
 	Since     uint64                    `json:"since"`
 }
@@ -398,6 +486,11 @@ func (r *Replica) ApplyDelta(delta DeltaReplicaState) {
 		for _, token := range tagState.Removes {
 			tagSet.RemoveToken(token.Token)
 		}
+	}
+
+	// Apply ACLs
+	for _, acl := range delta.ACLs {
+		r.SetACL(acl)
 	}
 	
 	// Update clock

@@ -4,6 +4,7 @@ package engine
 
 import (
 	"github.com/amaydixit11/acorde/internal/acl"
+	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/amaydixit11/acorde/internal/hooks"
 	"github.com/amaydixit11/acorde/internal/importer"
 	"github.com/amaydixit11/acorde/internal/query"
@@ -65,7 +66,7 @@ type ACLStore = acl.Store
 var NewACLStore = acl.NewStore
 
 // ACL represents access control for an entry
-type ACL = acl.ACL
+type ACL = core.ACL
 
 // Permission levels
 type Permission = acl.Permission

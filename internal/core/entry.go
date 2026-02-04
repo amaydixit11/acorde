@@ -75,3 +75,30 @@ func (e Entry) Clone() Entry {
 		Deleted:   e.Deleted,
 	}
 }
+
+// ACL represents access control for an entry
+type ACL struct {
+	EntryID   uuid.UUID `json:"entry_id"`
+	Owner     string    `json:"owner"`              // PeerID of owner
+	Readers   []string  `json:"readers,omitempty"`  // PeerIDs with read access
+	Writers   []string  `json:"writers,omitempty"`  // PeerIDs with write access
+	Public    bool      `json:"public"`              // Anyone can read
+	Timestamp uint64    `json:"timestamp"`          // Logical time for LWW resolution
+}
+
+// Clone creates a deep copy of the ACL
+func (a ACL) Clone() ACL {
+	readers := make([]string, len(a.Readers))
+	copy(readers, a.Readers)
+	writers := make([]string, len(a.Writers))
+	copy(writers, a.Writers)
+
+	return ACL{
+		EntryID:   a.EntryID,
+		Owner:     a.Owner,
+		Readers:   readers,
+		Writers:   writers,
+		Public:    a.Public,
+		Timestamp: a.Timestamp,
+	}
+}

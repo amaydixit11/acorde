@@ -162,6 +162,32 @@ func New(cfg Config) (Engine, error) {
 		replica.HydrateEntry(entry)
 	}
 
+	// Initialize ACL Store
+	var localPeerID string
+	nodeIDPath := filepath.Join(filepath.Dir(dbPath), "node_id")
+	
+	if idBytes, err := os.ReadFile(nodeIDPath); err == nil {
+		localPeerID = string(idBytes)
+	} else {
+		localPeerID = uuid.New().String()
+		os.WriteFile(nodeIDPath, []byte(localPeerID), 0644)
+	}
+
+	aclStore, err := acl.NewStore(store.GetDB(), localPeerID)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to create acl store: %w", err)
+	}
+
+	// Hydrate ACLs
+	acls, err := aclStore.List()
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to load ACLs: %w", err)
+	}
+	for _, a := range acls {
+		replica.SetACL(a)
+	}
 	var key *crypto.Key
 	if cfg.EncryptionKey != nil {
 		key = cfg.EncryptionKey
@@ -172,30 +198,6 @@ func New(cfg Config) (Engine, error) {
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to create version store: %w", err)
-	}
-
-	// Initialize ACL Store
-	var localPeerID string
-	nodeIDPath := filepath.Join(filepath.Dir(dbPath), "node_id")
-	
-	if idBytes, err := os.ReadFile(nodeIDPath); err == nil {
-		localPeerID = string(idBytes)
-	} else {
-		// Generate new ID and persist
-		localPeerID = uuid.New().String()
-		if err := os.WriteFile(nodeIDPath, []byte(localPeerID), 0644); err != nil {
-			// Warn but proceed? Or fail? Better to fail if persistence is required.
-			// But for now, let's just log or ignore? 
-			// User expects persistence, so let's try to write. 
-			// If we can't write, maybe we can't run.
-			return nil, fmt.Errorf("failed to persist node_id: %w", err)
-		}
-	}
-
-	aclStore, err := acl.NewStore(store.GetDB(), localPeerID)
-	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("failed to create acl store: %w", err)
 	}
 
 	return &engineImpl{
@@ -250,11 +252,14 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 	result2.Owner = e.localID       // Set owner
 
 	// Set default ACL (Private, Owned by creator)
-	e.acls.SetACL(acl.ACL{
+	defaultACL := core.ACL{
 		EntryID: result2.ID,
 		Owner:   e.localID,
 		Public:  false,
-	})
+		Timestamp: result2.CreatedAt,
+	}
+	e.acls.SetACL(defaultACL)
+	e.replica.SetACL(defaultACL) // Update Sync Replica
 
 	// Save initial version
 	e.versions.SaveVersion(result2.ID, content, input.Tags, result2.CreatedAt, e.localID)
@@ -462,8 +467,16 @@ func (e *engineImpl) ApplyRemotePayload(payload []byte) error {
 
 	// Persist merged state to storage
 	for _, entry := range e.replica.ListEntries() {
+		// fmt.Printf("DEBUG: Persisting entry %s\n", entry.ID)
 		if err := e.store.Put(entry); err != nil {
 			return fmt.Errorf("failed to persist merged entry: %w", err)
+		}
+	}
+
+	// Persist merged ACLs
+	for _, acl := range e.replica.ListACLs() {
+		if err := e.acls.SetACL(acl); err != nil {
+			return fmt.Errorf("failed to persist merged ACL: %w", err)
 		}
 	}
 
@@ -489,6 +502,13 @@ func (e *engineImpl) ApplySyncState(state crdt.ReplicaState) error {
 	for _, entry := range e.replica.ListEntries() {
 		if err := e.store.Put(entry); err != nil {
 			return fmt.Errorf("failed to persist merged entry: %w", err)
+		}
+	}
+
+	// Persist merged ACLs
+	for _, acl := range e.replica.ListACLs() {
+		if err := e.acls.SetACL(acl); err != nil {
+			return fmt.Errorf("failed to persist merged ACL: %w", err)
 		}
 	}
 

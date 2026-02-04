@@ -4,9 +4,9 @@ Complete reference for the Acorde REST API and Go library.
 
 ## REST API
 
-Start the server:
+Start the server (and sync daemon):
 ```bash
-./acorde serve --port 7331
+./acorde daemon --api-port 7331
 ```
 
 ### Endpoints
@@ -36,7 +36,7 @@ Content-Type: application/json
   "type": "note",
   "content": "Hello World",
   "tags": ["work", "important"],
-  "owner": "12D3Koo..." 
+  "owner": "12D3Koo..." // Output only
 }
 ```
 
