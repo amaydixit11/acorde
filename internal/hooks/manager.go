@@ -193,7 +193,7 @@ func (m *Manager) executeWebhook(config *WebhookConfig, event HookEvent) error {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-VaultD-Event", string(event.Type))
+		req.Header.Set("X-Acorde-Event", string(event.Type))
 
 		for k, v := range config.Headers {
 			req.Header.Set(k, v)
