@@ -363,6 +363,7 @@ func cmdInvite(args []string) {
 	fs := flag.NewFlagSet("invite", flag.ExitOnError)
 	dataDir := fs.String("data", "", "Data directory")
 	expiry := fs.Duration("expiry", 24*time.Hour, "Invite expiry duration")
+	port := fs.Int("port", 0, "Port to listen/advertise (0 = random)")
 	fs.Parse(args)
 
 	cfg := engine.Config{DataDir: *dataDir}
@@ -374,6 +375,9 @@ func cmdInvite(args []string) {
 
 	// Create sync service just for the host
 	syncCfg := sync.DefaultConfig()
+	if *port > 0 {
+		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
+	}
 	syncCfg.EnableMDNS = false
 	provider := sync.NewEngineAdapter(&syncableEngine{e})
 	svc, err := sync.NewP2PService(provider, syncCfg)
