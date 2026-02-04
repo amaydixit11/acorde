@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/amaydixit11/vaultd/internal/core"
 	"github.com/amaydixit11/vaultd/internal/crdt"
@@ -13,6 +14,7 @@ import (
 	"github.com/amaydixit11/vaultd/internal/storage/sqlite"
 	"github.com/google/uuid"
 )
+
 
 // Config contains configuration options for the engine
 type Config struct {
@@ -74,6 +76,9 @@ type Engine interface {
 	GetSyncPayload() ([]byte, error)
 	ApplyRemotePayload(payload []byte) error
 
+	// Events
+	Subscribe() Subscription
+
 	// Lifecycle
 	Close() error
 }
@@ -85,6 +90,7 @@ type engineImpl struct {
 	replica *crdt.Replica // CRDT state (source of truth)
 	store   storage.Store // Persistent storage (materialized view)
 	key     *crypto.Key   // Encryption key (nil = disabled)
+	events  *EventBus     // Event subscriptions
 }
 
 // New creates a new engine instance
@@ -146,6 +152,7 @@ func New(cfg Config) (Engine, error) {
 		replica: replica,
 		store:   store,
 		key:     key,
+		events:  NewEventBus(),
 	}, nil
 }
 
@@ -179,6 +186,15 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 
 	result := toInternalEntry(coreEntry)
 	result.Content = input.Content // Return plaintext to caller
+
+	// Emit event
+	e.events.Publish(Event{
+		Type:      EventCreated,
+		EntryID:   result.ID,
+		EntryType: string(result.Type),
+		Timestamp: time.Now(),
+	})
+
 	return result, nil
 }
 
@@ -239,7 +255,19 @@ func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
 
 	// Get updated entry and persist
 	coreEntry, _ := e.replica.GetEntry(id)
-	return e.store.Put(coreEntry)
+	if err := e.store.Put(coreEntry); err != nil {
+		return fmt.Errorf("failed to store updated entry: %w", err)
+	}
+
+	// Emit event
+	e.events.Publish(Event{
+		Type:      EventUpdated,
+		EntryID:   id,
+		EntryType: string(toInternalEntry(coreEntry).Type),
+		Timestamp: time.Now(),
+	})
+
+	return nil
 }
 
 // DeleteEntry marks an entry as deleted
@@ -250,7 +278,18 @@ func (e *engineImpl) DeleteEntry(id uuid.UUID) error {
 	}
 
 	// Persist tombstone
-	return e.store.Delete(id)
+	if err := e.store.Delete(id); err != nil {
+		return err
+	}
+
+	// Emit event
+	e.events.Publish(Event{
+		Type:      EventDeleted,
+		EntryID:   id,
+		Timestamp: time.Now(),
+	})
+
+	return nil
 }
 
 // ListEntries returns entries matching the filter
@@ -374,4 +413,9 @@ func convertCRDTError(err error) error {
 		return storage.ErrNotFound{ID: notFound.ID}
 	}
 	return err
+}
+
+// Subscribe returns a subscription for receiving change events
+func (e *engineImpl) Subscribe() Subscription {
+	return e.events.Subscribe()
 }

@@ -19,6 +19,8 @@
 package engine
 
 import (
+	"time"
+
 	impl "github.com/amaydixit11/vaultd/internal/engine"
 	"github.com/amaydixit11/vaultd/pkg/crypto"
 	"github.com/google/uuid"
@@ -29,16 +31,16 @@ type EntryType string
 
 // Entry type constants
 const (
-	Note  EntryType = "note"
-	Log   EntryType = "log"
-	File  EntryType = "file"
-	Event EntryType = "event"
+	Note       EntryType = "note"
+	Log        EntryType = "log"
+	File       EntryType = "file"
+	EventEntry EntryType = "event"
 )
 
 // IsValid checks if the entry type is valid
 func (t EntryType) IsValid() bool {
 	switch t {
-	case Note, Log, File, Event:
+	case Note, Log, File, EventEntry:
 		return true
 	default:
 		return false
@@ -98,6 +100,9 @@ type Engine interface {
 	// Sync hooks (called by transport layer)
 	GetSyncPayload() ([]byte, error)
 	ApplyRemotePayload(payload []byte) error
+
+	// Events - Subscribe to change notifications
+	Subscribe() Subscription
 
 	// Lifecycle
 	Close() error
@@ -203,6 +208,61 @@ func (w *engineWrapper) ApplyRemotePayload(payload []byte) error {
 
 func (w *engineWrapper) Close() error {
 	return w.impl.Close()
+}
+
+// Subscribe returns a subscription for change events
+func (w *engineWrapper) Subscribe() Subscription {
+	internalSub := w.impl.Subscribe()
+	return &subscriptionWrapper{impl: internalSub}
+}
+
+// Subscription wraps internal subscription
+type Subscription interface {
+	Events() <-chan Event
+	Close()
+}
+
+type subscriptionWrapper struct {
+	impl impl.Subscription
+}
+
+func (s *subscriptionWrapper) Events() <-chan Event {
+	// We need to convert internal events to public events
+	ch := make(chan Event, 100)
+	go func() {
+		for e := range s.impl.Events() {
+			ch <- Event{
+				Type:      EventType(e.Type),
+				EntryID:   e.EntryID,
+				EntryType: e.EntryType,
+				Timestamp: e.Timestamp,
+			}
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+func (s *subscriptionWrapper) Close() {
+	s.impl.Close()
+}
+
+// Event types
+type EventType string
+
+const (
+	EventCreated EventType = "created"
+	EventUpdated EventType = "updated"
+	EventDeleted EventType = "deleted"
+	EventSynced  EventType = "synced"
+)
+
+// Event represents a change notification
+type Event struct {
+	Type      EventType `json:"type"`
+	EntryID   uuid.UUID `json:"entry_id"`
+	EntryType string    `json:"entry_type,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // Type conversion helpers
