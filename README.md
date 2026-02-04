@@ -1,6 +1,6 @@
 # vaultd
 
-**vaultd** is a **local-first**, **peer-to-peer** data synchronization engine constructed with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
+**vaultd** is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg?logo=go)
@@ -8,164 +8,248 @@
 
 ## ✨ Features
 
+### Core
 - **Local-First**: Built on SQLite. Works completely offline.
 - **Conflict-Free**: Uses State-based CRDTs (LWW-Set for entries, OR-Set for tags) to merge data automatically.
-- **Peer-to-Peer Sync**:
-  - **mDNS**: Automatic discovery on Release LAN.
-  - **DHT**: Global discovery via Kademlia DHT (optional).
-  - **Direct Pairing**: QR-code based pairing for trusted devices.
-- **End-to-End Encryption**:
-  - **XChaCha20-Poly1305** for content encryption.
-  - **Argon2id** for key derivation.
-  - Zero-knowledge sync (peers store encrypted blobs).
-- **Developer Ready**:
-  - Embeddable Go library `pkg/engine`.
-  - Standalone daemon CLI `cmd/vaultd`.
+- **End-to-End Encryption**: XChaCha20-Poly1305 content encryption with Argon2id key derivation.
+
+### Sync
+- **mDNS**: Automatic discovery on local LAN.
+- **DHT**: Global discovery via Kademlia DHT (optional).
+- **Delta Sync**: Only sync entries that changed since last sync (10x faster).
+- **Direct Pairing**: QR-code based pairing for trusted devices.
+
+### API
+- **Go Library**: Embed `pkg/engine` in your application.
+- **REST API**: `vaultd serve --port 8080` for any language.
+- **Event Subscriptions**: Real-time change notifications via SSE.
+- **Query Language**: Filter entries with `type = "note" AND tags CONTAINS "work"`.
+- **Full-Text Search**: Search content with Bleve (pure Go).
+
+### Storage
+- **Per-Entry Encryption**: Share specific entries with specific peers.
+- **Blob Storage**: Content-addressed storage for large files (images, PDFs).
 
 ## 📦 Installation
 
 ```bash
 # Install CLI
 go install github.com/amaydixit11/vaultd/cmd/vaultd@latest
+
+# Or build from source
+git clone https://github.com/amaydixit11/vaultd.git
+cd vaultd/cmd/vaultd
+go build -o vaultd .
 ```
 
-## 🚀 Quick Start (CLI)
+## 🚀 Quick Start
 
-### 1. Initialize & Secure
-Initialize a new vault. You will be prompted to set a password.
+### CLI Mode
 
 ```bash
+# Initialize encrypted vault
 vaultd init
-# Output:
-# Enter new password: ...
-# ✅ Vault initialized at ~/.vaultd
-```
 
-### 2. Start Daemon
-Start the sync daemon. It will unlock your vault and begin discovering peers.
-
-```bash
+# Start sync daemon (P2P)
 vaultd daemon
-# Output:
-# 🔒 Vault is encrypted. Enter password: ...
-# 🚀 Starting vaultd daemon...
-# ✅ Daemon started! Discovering peers on LAN...
-```
 
-### 3. Add Data
-In another terminal, add some data.
-
-```bash
-# Add a note
-vaultd add --type note --content "Meeting at 10am" --tags work,urgent
-
-# List notes
+# Add data
+vaultd add --type note --content "Hello World" --tags work,important
 vaultd list --type note
-
-# Update a note
-vaultd update <UUID> --content "Meeting rescheduled to 11am"
 ```
 
-## 🔐 Encryption & Security
+### REST API Mode
 
-**vaultd** uses a "trust no one" architecture. 
-
-1.  **At Rest**: All content is encrypted using **XChaCha20-Poly1305**. The encryption key is protected by a master key, which is encrypted with **Argon2id** (derived from your password) and stored in `~/.vaultd/keys.json`.
-2.  **In Transit**: Sync streams are encrypted via libp2p's Noise protocol.
-3.  **Syncing**: When syncing, peers exchange *encrypted* CRDT payloads. A peer without the key can store and relay the data but cannot read it (Zero-Knowledge Sync).
-
-## 🤝 Pairing Devices
-
-To sync 2 devices (e.g., A and B), they must share the same **Encryption Key**.
-
-**Device A (Source):**
 ```bash
-vaultd invite --share-key
-# Output:
-# 🔒 Vault is encrypted. Enter password: ...
-# <QR Code>
-# Invite code: vaultd://<PEER_ID>?key=<ENCRYPTED_KEY>
+# Start REST server
+vaultd serve --port 8080
+
+# Use from any language
+curl http://localhost:8080/entries
+curl -X POST http://localhost:8080/entries \
+  -H "Content-Type: application/json" \
+  -d '{"type":"note","content":"Hello from API","tags":["test"]}'
+
+# Real-time events (SSE)
+curl http://localhost:8080/events
 ```
 
-**Device B (Target):**
-```bash
-# Pairs with Device A and imports the key
-vaultd pair "vaultd://..."
-# Output:
-# 🔑 Invite contains encryption key. Set a password to protect it: ...
-# ✅ Vault initialized with imported key.
-```
-
-## 🛠️ Library Usage
-
-Embed **vaultd** into your own Go application:
+### Library Mode
 
 ```go
 package main
 
 import (
-	"log"
-	
-	"github.com/amaydixit11/vaultd/pkg/engine"
-	"github.com/amaydixit11/vaultd/pkg/crypto"
+    "log"
+    "github.com/amaydixit11/vaultd/pkg/engine"
+    "github.com/amaydixit11/vaultd/pkg/crypto"
 )
 
 func main() {
-	// 1. Initialize Key (or load from storage)
-	key, _ := crypto.GenerateKey()
-	
-	// 2. Configure Engine
-	cfg := engine.Config{
-		DataDir:       "./my-app-data",
-		EncryptionKey: &key,
-	}
+    // Initialize with encryption
+    key, _ := crypto.GenerateKey()
+    e, _ := engine.New(engine.Config{
+        DataDir:       "./data",
+        EncryptionKey: &key,
+    })
+    defer e.Close()
 
-	// 3. Start Engine
-	e, err := engine.New(cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer e.Close()
+    // Add entry
+    entry, _ := e.AddEntry(engine.AddEntryInput{
+        Type:    engine.Note,
+        Content: []byte("Secret note"),
+        Tags:    []string{"private"},
+    })
+    log.Printf("Created: %s", entry.ID)
 
-	// 4. Use Engine
-	entry, _ := e.AddEntry(engine.AddEntryInput{
-		Type:    engine.Note,
-		Content: []byte("Secret Data"),
-		Tags:    []string{"embedded"},
-	})
-	
-	log.Printf("Added entry: %s", entry.ID)
+    // Query entries
+    results, _ := e.Query(`type = "note" AND tags CONTAINS "private" LIMIT 10`)
+    
+    // Search content
+    found, _ := e.Search("secret", engine.SearchOptions{Limit: 20})
+    
+    // Subscribe to changes
+    sub := e.Subscribe()
+    go func() {
+        for event := range sub.Events() {
+            log.Printf("Event: %s %s", event.Type, event.EntryID)
+        }
+    }()
 }
+```
+
+## 📡 REST API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/entries` | List entries (with `?type=` and `?tag=` filters) |
+| POST | `/entries` | Create entry |
+| GET | `/entries/:id` | Get entry by ID |
+| PUT | `/entries/:id` | Update entry |
+| DELETE | `/entries/:id` | Delete entry |
+| GET | `/status` | Vault status |
+| GET | `/events` | Server-Sent Events stream |
+
+## 🔍 Query Language
+
+```go
+// String DSL
+results, _ := e.Query(`
+    type = "note" AND 
+    tags CONTAINS "work" AND 
+    created_at > 1700000000
+    LIMIT 20
+`)
+
+// Fluent Builder
+entries, _ := e.NewQuery().
+    Type(engine.Note).
+    Tag("work").
+    Since(timestamp).
+    Limit(10).
+    Execute()
+```
+
+## 📦 Blob Storage
+
+Store large files without bloating SQLite:
+
+```go
+// Create blob store
+blobs, _ := engine.NewBlobStore("./data")
+
+// Store image (returns content-addressed ID)
+cid, _ := blobs.StoreBlob(imageBytes)
+// cid = "a1b2c3d4..."
+
+// Reference in entry metadata
+entry, _ := e.AddEntry(engine.AddEntryInput{
+    Type:    engine.File,
+    Content: []byte(`{"name":"photo.jpg","cid":"` + string(cid) + `"}`),
+})
+
+// Retrieve later
+data, _ := blobs.GetBlob(cid)
+```
+
+## 🔐 Encryption
+
+### Vault Encryption
+All content is encrypted at rest using **XChaCha20-Poly1305**. The master key is protected with **Argon2id**.
+
+### Per-Entry Encryption
+Share specific entries with specific peers:
+
+```go
+// Create sharing manager
+mgr, _ := engine.NewSharingManager(masterKey)
+
+// Share entry with Alice and Bob
+shares, _ := mgr.ShareEntry(entryID, []engine.PeerID{aliceID, bobID})
+
+// Alice recovers the key
+key, _ := sharing.RecoverSharedKey(share, entryID, alicePrivate, senderPublic)
+```
+
+## 🤝 Device Pairing
+
+**Device A:**
+```bash
+vaultd invite --share-key
+# Shows QR code + invite URL
+```
+
+**Device B:**
+```bash
+vaultd pair "vaultd://..."
+# Imports encryption key
 ```
 
 ## 🏗️ Architecture
 
 ```mermaid
 graph TD
-    User[User / App] --> API[pkg/engine (Public API)]
-    API --> Engine[Internal Engine]
+    User[User / App] --> API[pkg/engine]
+    User --> REST[REST API :8080]
     
-    subgraph Core Logic
-        Engine --> Replica[CRDT Replica (Logic)]
-        Engine --> Store[SQLite Store (Persistence)]
-        Engine --> Crypto[Crypto Service]
+    subgraph Engine
+        API --> CRDT[CRDT Replica]
+        API --> Store[SQLite]
+        API --> Crypto[Encryption]
+        API --> Events[Event Bus]
+        API --> Search[Bleve FTS]
+        API --> Blobs[Blob Store]
     end
     
-    subgraph Sync Layer
-        Replica <--> Adapter[Sync Adapter]
-        Adapter <--> P2P[P2P Service (libp2p)]
-        P2P <--> Network((Internet))
+    subgraph Sync
+        CRDT <--> P2P[libp2p]
+        P2P <--> mDNS[LAN Discovery]
+        P2P <--> DHT[Global DHT]
     end
 ```
 
-### Components
+## 📂 Project Structure
 
--   **CRDT**: Hybrid LWW-Set (Entries) and OR-Set (Tags). Ensures strong eventual consistency.
--   **Storage**: SQLite with a schema optimized for CRDT history and efficient querying.
--   **Sync**:
-    -   **Transport**: TCP/QUIC via libp2p.
-    -   **Discovery**: mDNS (Local), Kademlia DHT (Global).
-    -   **Protocol**: State-based sync (Merkle-DAG optimization planned).
+```
+vaultd/
+├── cmd/vaultd/          # CLI application
+├── pkg/
+│   ├── engine/          # Public API (Engine, Query, Search, Blob, Sharing)
+│   ├── api/             # REST API server
+│   └── crypto/          # Encryption utilities
+├── internal/
+│   ├── crdt/            # LWW-Set, OR-Set, Delta Sync
+│   ├── engine/          # Engine implementation
+│   ├── storage/         # SQLite storage
+│   ├── sync/            # P2P sync (libp2p)
+│   ├── search/          # Bleve full-text search
+│   ├── sharing/         # Per-entry encryption
+│   └── blob/            # Content-addressed storage
+├── examples/
+│   ├── notes-cli/       # Go CLI example
+│   └── notes-web/       # HTML/JS web example
+└── docs/                # Architecture docs
+```
 
 ## 🗺️ Roadmap
 
@@ -173,7 +257,11 @@ graph TD
 - [x] Phase 2: Core Replication Logic
 - [x] Phase 3: P2P Sync & Discovery
 - [x] Phase 4: End-to-End Encryption
-- [ ] Phase 5: Hardening (Performance, Conflict UI, Partial Sync)
+- [x] Phase 5: REST API & Event Hooks
+- [x] Phase 6: Query Language & Search
+- [x] Phase 7: Blob Storage & Per-Entry Encryption
+- [ ] Phase 8: Mobile SDKs (iOS, Android)
+- [ ] Phase 9: Web Assembly Build
 
 ## 📄 License
 
