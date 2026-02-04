@@ -64,6 +64,7 @@ type Entry struct {
 	CreatedAt uint64
 	UpdatedAt uint64
 	Deleted   bool
+	Owner     string    // PeerID of creator/owner
 }
 
 // Engine is the main interface for acorde
@@ -231,6 +232,7 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 
 	result2 := toInternalEntry(coreEntry)
 	result2.Content = input.Content // Return plaintext to caller
+	result2.Owner = e.localID       // Set owner
 
 	// Set default ACL (Private, Owned by creator)
 	e.acls.SetACL(acl.ACL{
@@ -277,6 +279,12 @@ func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
 		}
 		entry.Content = plaintext
 	}
+
+	// Populate Owner
+	if acl, err := e.acls.GetACL(id); err == nil {
+		entry.Owner = acl.Owner
+	}
+
 	return entry, nil
 }
 
@@ -405,6 +413,12 @@ func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
 			}
 			internal.Content = plaintext
 		}
+		
+		// Populate Owner
+		if acl, err := e.acls.GetACL(internal.ID); err == nil {
+			internal.Owner = acl.Owner
+		}
+		
 		result[i] = internal
 	}
 	return result, nil
