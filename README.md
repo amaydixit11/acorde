@@ -286,16 +286,16 @@ acorde/
 
 ## 🗺️ Roadmap
 
-- [x] Phase 1: Local Engine (SQLite + CRDT)
-- [x] Phase 2: Core Replication Logic
-- [x] Phase 3: P2P Sync & Discovery
-- [x] Phase 4: End-to-End Encryption
-- [x] Phase 5: REST API & Event Hooks
-- [x] Phase 6: Query Language & Search
-- [x] Phase 7: Blob Storage & Per-Entry Encryption
-- [x] Phase 8: Schema Validation, Versioning, ACLs, Webhooks & Import/Export
-- [ ] Phase 9: Mobile SDKs (iOS, Android)
-- [ ] Phase 10: Web Assembly Build
+- [x] Goal 1: Local Engine (SQLite + CRDT)
+- [x] Goal 2: Core Replication Logic
+- [x] Goal 3: P2P Sync & Discovery
+- [x] Goal 4: End-to-End Encryption
+- [x] Goal 5: REST API & Event Hooks
+- [x] Goal 6: Query Language & Search
+- [x] Goal 7: Blob Storage & Per-Entry Encryption
+- [x] Goal 8: Schema Validation, Versioning, ACLs, Webhooks & Import/Export
+- [ ] Goal 9: Mobile SDKs (iOS, Android)
+- [ ] Goal 10: Web Assembly Build
 
 ## 📄 License
 
