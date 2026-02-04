@@ -89,6 +89,7 @@ type Engine interface {
 	// Accessors for new features
 	Versions() *version.Store
 	ACL() *acl.Store
+	Hooks() *hooks.Manager
 
 	// Lifecycle
 	Close() error
@@ -105,6 +106,7 @@ type engineImpl struct {
 	schemas  *schema.Registry // Schema validation
 	versions *version.Store   // Version history
 	acls     *acl.Store       // Access control
+	hooks    *hooks.Manager   // Webhooks
 	localID  string           // Local Peer ID
 }
 
@@ -187,6 +189,8 @@ func New(cfg Config) (Engine, error) {
 		schemas:  schema.NewRegistry(),
 		versions: versionStore,
 		acls:     aclStore,
+		hooks:    hooks.NewManager(),
+		localID:  localPeerID,
 	}, nil
 }
 
@@ -244,6 +248,9 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 		EntryType: string(result2.Type),
 		Timestamp: time.Now(),
 	})
+
+	// Trigger Webhooks
+	e.hooks.TriggerAsync(hooks.NewCreateEvent(result2.ID, string(result2.Type), input.Content, input.Tags))
 
 	return result2, nil
 }
@@ -337,6 +344,9 @@ func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
 		Timestamp: time.Now(),
 	})
 
+	// Trigger Webhooks
+	e.hooks.TriggerAsync(hooks.NewUpdateEvent(id, string(toInternalEntry(coreEntry).Type), content, tags))
+
 	return nil
 }
 
@@ -358,6 +368,9 @@ func (e *engineImpl) DeleteEntry(id uuid.UUID) error {
 		EntryID:   id,
 		Timestamp: time.Now(),
 	})
+
+	// Trigger Webhooks
+	e.hooks.TriggerAsync(hooks.NewDeleteEvent(id))
 
 	return nil
 }
@@ -503,4 +516,9 @@ func (e *engineImpl) Versions() *version.Store {
 // ACL returns the ACL store
 func (e *engineImpl) ACL() *acl.Store {
 	return e.acls
+}
+
+// Hooks returns the hooks manager
+func (e *engineImpl) Hooks() *hooks.Manager {
+	return e.hooks
 }
