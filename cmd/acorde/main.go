@@ -15,11 +15,11 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/amaydixit11/vaultd/internal/crdt"
-	"github.com/amaydixit11/vaultd/pkg/api"
-	"github.com/amaydixit11/vaultd/pkg/crypto"
-	"github.com/amaydixit11/vaultd/internal/sync"
-	"github.com/amaydixit11/vaultd/pkg/engine"
+	"github.com/amaydixit11/acorde/internal/crdt"
+	"github.com/amaydixit11/acorde/pkg/api"
+	"github.com/amaydixit11/acorde/pkg/crypto"
+	"github.com/amaydixit11/acorde/internal/sync"
+	"github.com/amaydixit11/acorde/pkg/engine"
 	"github.com/google/uuid"
 )
 

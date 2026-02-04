@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"github.com/amaydixit11/vaultd/internal/sharing"
-	"github.com/amaydixit11/vaultd/pkg/crypto"
+	"github.com/amaydixit11/acorde/internal/sharing"
+	"github.com/amaydixit11/acorde/pkg/crypto"
 )
 
 // PeerID is a public key identifying a peer for key exchange

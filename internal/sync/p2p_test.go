@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amaydixit11/vaultd/internal/core"
-	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/crdt"
 )
 
 // mockStateProvider implements StateProvider for testing

@@ -3,7 +3,7 @@ package engine_test
 import (
 	"testing"
 
-	"github.com/amaydixit11/vaultd/pkg/engine"
+	"github.com/amaydixit11/acorde/pkg/engine"
 	"github.com/google/uuid"
 )
 

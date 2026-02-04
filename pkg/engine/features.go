@@ -3,13 +3,13 @@ package engine
 // Re-export internal packages for public use
 
 import (
-	"github.com/amaydixit11/vaultd/internal/acl"
-	"github.com/amaydixit11/vaultd/internal/hooks"
-	"github.com/amaydixit11/vaultd/internal/importer"
-	"github.com/amaydixit11/vaultd/internal/query"
-	"github.com/amaydixit11/vaultd/internal/schema"
-	"github.com/amaydixit11/vaultd/internal/vault"
-	"github.com/amaydixit11/vaultd/internal/version"
+	"github.com/amaydixit11/acorde/internal/acl"
+	"github.com/amaydixit11/acorde/internal/hooks"
+	"github.com/amaydixit11/acorde/internal/importer"
+	"github.com/amaydixit11/acorde/internal/query"
+	"github.com/amaydixit11/acorde/internal/schema"
+	"github.com/amaydixit11/acorde/internal/vault"
+	"github.com/amaydixit11/acorde/internal/version"
 )
 
 // ========== Schema Validation ==========

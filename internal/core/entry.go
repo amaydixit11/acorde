@@ -27,12 +27,12 @@ func (t EntryType) IsValid() bool {
 	return ValidEntryTypes[t]
 }
 
-// Entry is the canonical state unit in vaultd
-// Content is opaque to vaultd - it doesn't parse or interpret it
+// Entry is the canonical state unit in acorde
+// Content is opaque to acorde - it doesn't parse or interpret it
 type Entry struct {
 	ID        uuid.UUID `json:"id"`
 	Type      EntryType `json:"type"`
-	Content   []byte    `json:"content"` // Opaque to vaultd
+	Content   []byte    `json:"content"` // Opaque to acorde
 	Tags      []string  `json:"tags"`
 	CreatedAt uint64    `json:"created_at"` // Logical time (Lamport)
 	UpdatedAt uint64    `json:"updated_at"` // Logical time (Lamport)

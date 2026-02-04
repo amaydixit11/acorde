@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/amaydixit11/vaultd/internal/core"
-	"github.com/amaydixit11/vaultd/internal/crdt"
-	"github.com/amaydixit11/vaultd/pkg/crypto"
-	"github.com/amaydixit11/vaultd/internal/storage"
-	"github.com/amaydixit11/vaultd/internal/storage/sqlite"
+	"github.com/amaydixit11/acorde/internal/acl"
+	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/schema"
+	"github.com/amaydixit11/acorde/internal/version"
+	"github.com/amaydixit11/acorde/pkg/crypto"
+	"github.com/amaydixit11/acorde/internal/storage"
+	"github.com/amaydixit11/acorde/internal/storage/sqlite"
 	"github.com/google/uuid"
 )
 
@@ -21,6 +24,7 @@ type Config struct {
 	DataDir       string
 	InMemory      bool
 	EncryptionKey *crypto.Key // *crypto.Key or nil
+	MaxVersions   int         // 0 = unlimited
 }
 
 // EntryType is re-exported from core for use by pkg/engine wrapper
@@ -79,6 +83,13 @@ type Engine interface {
 	// Events
 	Subscribe() Subscription
 
+	// Features
+	RegisterSchema(entryType string, schemaJSON []byte) error
+	
+	// Accessors for new features
+	Versions() *version.Store
+	ACL() *acl.Store
+
 	// Lifecycle
 	Close() error
 }
@@ -87,10 +98,14 @@ type Engine interface {
 // Replica is the source of truth, Storage is a materialized view
 
 type engineImpl struct {
-	replica *crdt.Replica // CRDT state (source of truth)
-	store   storage.Store // Persistent storage (materialized view)
-	key     *crypto.Key   // Encryption key (nil = disabled)
-	events  *EventBus     // Event subscriptions
+	replica  *crdt.Replica    // CRDT state (source of truth)
+	store    storage.Store    // Persistent storage (materialized view)
+	key      *crypto.Key      // Encryption key (nil = disabled)
+	events   *EventBus        // Event subscriptions
+	schemas  *schema.Registry // Schema validation
+	versions *version.Store   // Version history
+	acls     *acl.Store       // Access control
+	localID  string           // Local Peer ID
 }
 
 // New creates a new engine instance
@@ -106,7 +121,7 @@ func New(cfg Config) (Engine, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to get home directory: %w", err)
 			}
-			dataDir = filepath.Join(home, ".vaultd")
+			dataDir = filepath.Join(home, ".acorde")
 		}
 
 		// Create data directory if it doesn't exist
@@ -114,7 +129,7 @@ func New(cfg Config) (Engine, error) {
 			return nil, fmt.Errorf("failed to create data directory: %w", err)
 		}
 
-		dbPath = filepath.Join(dataDir, "vault.db")
+		dbPath = filepath.Join(dataDir, "acorde.db")
 	}
 
 	store, err := sqlite.New(dbPath)
@@ -148,11 +163,30 @@ func New(cfg Config) (Engine, error) {
 		key = cfg.EncryptionKey
 	}
 
+	// Initialize Version Store
+	versionStore, err := version.NewStore(store.GetDB(), cfg.MaxVersions)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to create version store: %w", err)
+	}
+
+	// Initialize ACL Store
+	// For now using random UUID as peerID if not provided (should be consistent in real app)
+	localPeerID := uuid.New().String() 
+	aclStore, err := acl.NewStore(store.GetDB(), localPeerID)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to create acl store: %w", err)
+	}
+
 	return &engineImpl{
-		replica: replica,
-		store:   store,
-		key:     key,
-		events:  NewEventBus(),
+		replica:  replica,
+		store:    store,
+		key:      key,
+		events:   NewEventBus(),
+		schemas:  schema.NewRegistry(),
+		versions: versionStore,
+		acls:     aclStore,
 	}, nil
 }
 
@@ -160,6 +194,12 @@ func New(cfg Config) (Engine, error) {
 func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 	if !input.Type.IsValid() {
 		return Entry{}, fmt.Errorf("invalid entry type: %s", input.Type)
+	}
+
+	// Validate against schema if registered
+	result := e.schemas.Validate(string(input.Type), input.Content)
+	if !result.Valid {
+		return Entry{}, fmt.Errorf("schema validation failed: %v", result.Errors)
 	}
 
 	// Generate ID for AAD binding
@@ -184,22 +224,37 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 		return Entry{}, fmt.Errorf("failed to store entry: %w", err)
 	}
 
-	result := toInternalEntry(coreEntry)
-	result.Content = input.Content // Return plaintext to caller
+	result2 := toInternalEntry(coreEntry)
+	result2.Content = input.Content // Return plaintext to caller
+
+	// Set default ACL (Private, Owned by creator)
+	e.acls.SetACL(acl.ACL{
+		EntryID: result2.ID,
+		Owner:   e.localID,
+		Public:  false,
+	})
+
+	// Save initial version
+	e.versions.SaveVersion(result2.ID, content, input.Tags, result2.CreatedAt, e.localID)
 
 	// Emit event
 	e.events.Publish(Event{
 		Type:      EventCreated,
-		EntryID:   result.ID,
-		EntryType: string(result.Type),
+		EntryID:   result2.ID,
+		EntryType: string(result2.Type),
 		Timestamp: time.Now(),
 	})
 
-	return result, nil
+	return result2, nil
 }
 
 // GetEntry retrieves an entry by ID
 func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
+	// Check read permission
+	if allowed, _ := e.acls.CheckRead(id, e.localID); !allowed {
+		return Entry{}, fmt.Errorf("permission denied")
+	}
+
 	coreEntry, err := e.replica.GetEntry(id)
 	if err != nil {
 		return Entry{}, convertCRDTError(err)
@@ -219,6 +274,11 @@ func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
 
 // UpdateEntry updates an existing entry
 func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
+	// Check write permission
+	if allowed, _ := e.acls.CheckWrite(id, e.localID); !allowed {
+		return fmt.Errorf("permission denied")
+	}
+
 	var content []byte
 	var tags []string
 
@@ -229,6 +289,13 @@ func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
 	}
 
 	if input.Content != nil {
+		// Validate against schema if registered
+		typeStr := string(toInternalEntry(current).Type)
+		result := e.schemas.Validate(typeStr, *input.Content)
+		if !result.Valid {
+			return fmt.Errorf("schema validation failed: %v", result.Errors)
+		}
+
 		content = *input.Content
 		if e.key != nil {
 			aad := []byte(id.String())
@@ -258,6 +325,9 @@ func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
 	if err := e.store.Put(coreEntry); err != nil {
 		return fmt.Errorf("failed to store updated entry: %w", err)
 	}
+
+	// Save new version
+	e.versions.SaveVersion(id, content, tags, coreEntry.UpdatedAt, e.localID)
 
 	// Emit event
 	e.events.Publish(Event{
@@ -418,4 +488,19 @@ func convertCRDTError(err error) error {
 // Subscribe returns a subscription for receiving change events
 func (e *engineImpl) Subscribe() Subscription {
 	return e.events.Subscribe()
+}
+
+// RegisterSchema registers a JSON schema for an entry type
+func (e *engineImpl) RegisterSchema(entryType string, schemaJSON []byte) error {
+	return e.schemas.RegisterFromJSON(entryType, entryType+"-schema", schemaJSON)
+}
+
+// Versions returns the version store
+func (e *engineImpl) Versions() *version.Store {
+	return e.versions
+}
+
+// ACL returns the ACL store
+func (e *engineImpl) ACL() *acl.Store {
+	return e.acls
 }

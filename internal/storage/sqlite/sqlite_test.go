@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/amaydixit11/vaultd/internal/core"
-	"github.com/amaydixit11/vaultd/internal/storage"
+	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/storage"
 	"github.com/google/uuid"
 )
 

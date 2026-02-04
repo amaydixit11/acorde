@@ -14,8 +14,8 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
-// InvitePrefix is the URL scheme for vaultd invites
-const InvitePrefix = "vaultd://"
+// InvitePrefix is the URL scheme for acorde invites
+const InvitePrefix = "acorde://"
 
 // DefaultInviteExpiry is how long invites are valid
 const DefaultInviteExpiry = 24 * time.Hour
@@ -124,7 +124,7 @@ func (i *PeerInvite) ToQRString() (string, error) {
 	return qr.ToSmallString(false), nil
 }
 
-// ToMinimalCode returns a short code for QR: vaultd://PEERID@ADDR
+// ToMinimalCode returns a short code for QR: acorde://PEERID@ADDR
 func (i *PeerInvite) ToMinimalCode() string {
 	addr := ""
 	if len(i.Addresses) > 0 {

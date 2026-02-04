@@ -13,6 +13,12 @@
 - **Conflict-Free**: Uses State-based CRDTs (LWW-Set for entries, OR-Set for tags) to merge data automatically.
 - **End-to-End Encryption**: XChaCha20-Poly1305 content encryption with Argon2id key derivation.
 
+### Advanced (New in v0.8)
+- **Schema Validation**: Define JSON schemas for entry types. Enforced automatically.
+- **Versioning**: Full history tracking. Undo changes or audit usage.
+- **Access Control**: Owner/Reader/Writer permissions per entry.
+- **Multi-Vault**: Manage separate vaults (Work/Personal) in one daemon.
+
 ### Sync
 - **mDNS**: Automatic discovery on local LAN.
 - **DHT**: Global discovery via Kademlia DHT (optional).
@@ -91,24 +97,42 @@ func main() {
     e, _ := engine.New(engine.Config{
         DataDir:       "./data",
         EncryptionKey: &key,
+        MaxVersions:   50, // Keep last 50 versions
     })
     defer e.Close()
 
-    // Add entry
+    // 1. Register Schema (Optional)
+    e.RegisterSchema("task", []byte(`{
+        "type": "object", 
+        "required": ["title"], 
+        "properties": {"title": {"type": "string"}}
+    }`))
+
+    // 2. Add entry (Validates schema + Sets Owner + Saves Version 1)
     entry, _ := e.AddEntry(engine.AddEntryInput{
-        Type:    engine.Note,
-        Content: []byte("Secret note"),
-        Tags:    []string{"private"},
+        Type:    "task",
+        Content: []byte(`{"title": "Buy milk"}`),
+        Tags:    []string{"personal"},
     })
     log.Printf("Created: %s", entry.ID)
 
-    // Query entries
-    results, _ := e.Query(`type = "note" AND tags CONTAINS "private" LIMIT 10`)
+    // 3. Update entry (Checks ACL + Validates + Saves Version 2)
+    newContent := []byte(`{"title": "Buy almond milk"}`)
+    e.UpdateEntry(entry.ID, engine.UpdateEntryInput{
+        Content: &newContent,
+    })
+
+    // 4. Inspect History
+    history, _ := e.Versions().GetHistory(entry.ID)
+    log.Printf("Versions: %d", len(history)) // 2
+
+    // 5. Query entries
+    results, _ := e.Query(`type = "task" AND tags CONTAINS "personal" LIMIT 10`)
     
-    // Search content
-    found, _ := e.Search("secret", engine.SearchOptions{Limit: 20})
+    // 6. Search content
+    found, _ := e.Search("milk", engine.SearchOptions{Limit: 20})
     
-    // Subscribe to changes
+    // 7. Subscribe to changes
     sub := e.Subscribe()
     go func() {
         for event := range sub.Events() {
@@ -219,6 +243,9 @@ graph TD
         API --> Events[Event Bus]
         API --> Search[Bleve FTS]
         API --> Blobs[Blob Store]
+        API --> Schema[JSON Schema]
+        API --> ACL[Access Control]
+        API --> Version[Version History]
     end
     
     subgraph Sync
@@ -244,7 +271,11 @@ vaultd/
 │   ├── sync/            # P2P sync (libp2p)
 │   ├── search/          # Bleve full-text search
 │   ├── sharing/         # Per-entry encryption
-│   └── blob/            # Content-addressed storage
+│   ├── blob/            # Content-addressed storage
+│   ├── schema/          # JSON Schema validation
+│   ├── version/         # History tracking
+│   ├── acl/             # Access control
+│   └── hooks/           # Webhooks
 ├── examples/
 │   ├── notes-cli/       # Go CLI example
 │   └── notes-web/       # HTML/JS web example
@@ -260,8 +291,9 @@ vaultd/
 - [x] Phase 5: REST API & Event Hooks
 - [x] Phase 6: Query Language & Search
 - [x] Phase 7: Blob Storage & Per-Entry Encryption
-- [ ] Phase 8: Mobile SDKs (iOS, Android)
-- [ ] Phase 9: Web Assembly Build
+- [x] Phase 8: Schema Validation, Versioning & ACLs
+- [ ] Phase 9: Mobile SDKs (iOS, Android)
+- [ ] Phase 10: Web Assembly Build
 
 ## 📄 License
 

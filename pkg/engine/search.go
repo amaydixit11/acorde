@@ -3,7 +3,7 @@ package engine
 import (
 	"strings"
 
-	"github.com/amaydixit11/vaultd/internal/search"
+	"github.com/amaydixit11/acorde/internal/search"
 )
 
 // SearchOptions for full-text search

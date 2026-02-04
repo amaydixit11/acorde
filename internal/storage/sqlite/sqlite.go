@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/amaydixit11/vaultd/internal/core"
-	"github.com/amaydixit11/vaultd/internal/storage"
+	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/storage"
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -31,6 +31,11 @@ func New(path string) (*SQLiteStore, error) {
 	}
 
 	return store, nil
+}
+
+// GetDB returns the underlying SQL database
+func (s *SQLiteStore) GetDB() *sql.DB {
+	return s.db
 }
 
 // initSchema creates the database tables if they don't exist

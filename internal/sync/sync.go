@@ -12,16 +12,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/crdt"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // ProtocolID is the libp2p protocol identifier for vaultd sync
-const ProtocolID = "/vaultd/sync/1.0.0"
+const ProtocolID = "/acorde/sync/1.0.0"
 
 // ServiceName is the mDNS service name for discovery
-const ServiceName = "vaultd"
+const ServiceName = "acorde"
 
 // Config contains configuration for the SyncService
 type Config struct {

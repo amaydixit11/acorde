@@ -1,4 +1,4 @@
-module github.com/amaydixit11/vaultd
+module github.com/amaydixit11/acorde
 
 go 1.25.4
 

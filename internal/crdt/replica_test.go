@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/amaydixit11/vaultd/internal/core"
+	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/google/uuid"
 )
 

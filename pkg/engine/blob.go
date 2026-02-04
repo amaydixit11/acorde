@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/amaydixit11/vaultd/internal/blob"
+	"github.com/amaydixit11/acorde/internal/blob"
 )
 
 // CID is a Content Identifier (hash of blob content)

@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 
-	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/crdt"
 )
 
 // Syncable defines the interface an engine must implement for sync

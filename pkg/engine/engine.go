@@ -21,8 +21,8 @@ package engine
 import (
 	"time"
 
-	impl "github.com/amaydixit11/vaultd/internal/engine"
-	"github.com/amaydixit11/vaultd/pkg/crypto"
+	impl "github.com/amaydixit11/acorde/internal/engine"
+	"github.com/amaydixit11/acorde/pkg/crypto"
 	"github.com/google/uuid"
 )
 

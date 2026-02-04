@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"github.com/amaydixit11/vaultd/pkg/crypto"
+	"github.com/amaydixit11/acorde/pkg/crypto"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"

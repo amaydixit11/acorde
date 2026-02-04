@@ -14,7 +14,7 @@ import (
 )
 
 // RendezvousNamespace is the namespace for vaultd peer discovery
-const RendezvousNamespace = "/vaultd/1.0.0"
+const RendezvousNamespace = "/acorde/1.0.0"
 
 // DHTDiscovery provides global peer discovery via Kademlia DHT
 type DHTDiscovery struct {
