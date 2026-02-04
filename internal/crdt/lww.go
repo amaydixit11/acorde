@@ -149,12 +149,31 @@ func (s *LWWSet) Merge(other *LWWSet) {
 					Deleted:   otherElem.Deleted,
 				}
 			} else if !otherElem.Deleted && !existing.Deleted {
-				// Both not deleted, use ID as tie-breaker
-				if otherElem.Entry.ID.String() > existing.Entry.ID.String() {
+				// Both not deleted. Timestamps are equal. Entry ID is equal.
+				// We MUST have a deterministic tie-breaker based on CONTENT.
+				// If we don't, A keeps A, B keeps B -> Divergence.
+				
+				// Compare Content bytes
+				cmp := compareBytes(otherElem.Entry.Content, existing.Entry.Content)
+				if cmp > 0 {
+					// Other content "greater", so replace
 					s.elements[id] = LWWElement{
 						Entry:     otherElem.Entry.Clone(),
 						Timestamp: otherElem.Timestamp,
 						Deleted:   otherElem.Deleted,
+					}
+				} else if cmp == 0 {
+					// Content is same. Compare tags?
+					// Tags are handled by OR-Set, but Entry struct has them too.
+					// Let's assume Entry.Tags in LWW is secondary to OR-Set, but needed for equality.
+					// Compare tags as string.
+					tagCmp := compareTags(otherElem.Entry.Tags, existing.Entry.Tags)
+					if tagCmp > 0 {
+						s.elements[id] = LWWElement{
+							Entry:     otherElem.Entry.Clone(),
+							Timestamp: otherElem.Timestamp,
+							Deleted:   otherElem.Deleted,
+						}
 					}
 				}
 			}
@@ -190,4 +209,43 @@ func (s *LWWSet) ActiveSize() int {
 		}
 	}
 	return count
+}
+
+// compareBytes returns 1 if a > b, -1 if a < b, 0 if equal
+func compareBytes(a, b []byte) int {
+	if len(a) != len(b) {
+		if len(a) > len(b) {
+			return 1
+		}
+		return -1
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] > b[i] {
+			return 1
+		}
+		if a[i] < b[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+// compareTags returns 1 if a > b, -1 if a < b, 0 if equal
+// Simple string representation comparison
+func compareTags(a, b []string) int {
+	if len(a) != len(b) {
+		if len(a) > len(b) {
+			return 1
+		}
+		return -1
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] > b[i] {
+			return 1
+		}
+		if a[i] < b[i] {
+			return -1
+		}
+	}
+	return 0
 }

@@ -20,6 +20,7 @@ package engine
 
 import (
 	impl "github.com/amaydixit11/vaultd/internal/engine"
+	"github.com/amaydixit11/vaultd/pkg/crypto"
 	"github.com/google/uuid"
 )
 

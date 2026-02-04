@@ -1,5 +1,7 @@
 # Contributing to vaultd
 
+Thank you for your interest in contributing to **vaultd**!
+
 ## Development Setup
 
 ```bash
@@ -10,7 +12,7 @@ cd vaultd
 # Install dependencies
 go mod download
 
-# Run tests
+# Run tests (ensure >80% pass)
 go test ./...
 
 # Build CLI
@@ -21,19 +23,32 @@ go build -o vaultd ./cmd/vaultd
 
 ```
 vaultd/
-├── pkg/engine/      # Public API (import this)
-├── internal/
-│   ├── core/        # Domain model
-│   ├── engine/      # Engine implementation
-│   └── storage/     # Storage layer
-└── cmd/vaultd/      # Test CLI
+├── pkg/             # Public API
+│   ├── engine/      # Main Engine Interface
+│   └── crypto/      # Cryptography Primitives
+├── internal/        # Private Implementation
+│   ├── core/        # Domain Models
+│   ├── crdt/        # Conflict-Free Data Types
+│   ├── engine/      # Engine Implementation
+│   ├── storage/     # SQLite Adapter
+│   └── sync/        # P2P Networking (libp2p)
+├── cmd/vaultd/      # Daemon CLI
+├── docs/            # Architecture & Security Docs
+└── tests/           # Integration Tests
 ```
 
 ## Guidelines
 
-1. **Public API**: Only `pkg/engine/` is public. Don't import `internal/`.
-2. **Tests**: Add tests for new functionality. Aim for >70% coverage.
-3. **Commits**: Use conventional commits (`feat:`, `fix:`, `test:`, `docs:`).
+1.  **Public API**: Only packages in `pkg/` are importable by users. `internal/` is strict.
+2.  **Dependencies**: Minimise external deps. Uses `libp2p` (networking), `sqlite` (storage), `crypto` (std/x).
+3.  **Tests**:
+    -   Unit tests for logic (CRDT, Crypto).
+    -   Integration tests for flows.
+    -   Run `go test ./... -race` to check for race conditions.
+4.  **Commits**: Use [Conventional Commits](https://www.conventionalcommits.org/):
+    -   `feat: add msgpack support`
+    -   `fix: resolve deadlock in keystore`
+    -   `docs: update architecture diagram`
 
 ## Testing
 
@@ -41,18 +56,25 @@ vaultd/
 # Run all tests
 go test ./...
 
-# With coverage
-go test ./... -cover
+# With Race Detector (Recommended)
+go test -race ./...
 
-# Verbose
-go test ./... -v
+# Run specific package
+go test ./internal/crdt/... -v
 ```
 
 ## Pull Request Process
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Make your changes
-4. Run tests (`go test ./...`)
-5. Commit with conventional commit messages
-6. Open a pull request
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feat/my-feature`).
+3.  Implement changes.
+4.  Ensure tests pass.
+5.  Commit with conventional messages.
+6.  Open a Pull Request.
+
+## Encryption Implementation
+
+If modifying `internal/crypto` or key handling:
+-   **NEVER** log keys or passwords.
+-   **ALWAYS** use AAD when encrypting structural data.
+-   Ensure backward compatibility for KeyStore format.

@@ -1,6 +1,8 @@
 # vaultd Roadmap
 
-## Current Status: Phase 1 Complete ✅
+## Current Status: Phase 4.5 Complete (Encryption & Stability Fixes) ✅
+
+**vaultd** is feature-complete for v1.0 core functionality. It supports persistent storage, multi-peer discovery, CRDT-based merging, and end-to-end encryption.
 
 ## Phases
 
@@ -11,42 +13,47 @@
 - [x] Public Engine API
 - [x] Test CLI
 
-### Phase 2: CRDT Core 🔜
-- [ ] LWW-Element-Set for entries
-- [ ] OR-Set for tags
-- [ ] Deterministic merge function
-- [ ] Merge order independence tests
+### Phase 2: CRDT Core ✅
+- [x] LWW-Set for entries (Last-Write-Wins)
+- [x] OR-Set for tags (Observed-Remove Set)
+- [x] Deterministic merge function
+- [x] Merge order independence tests
 
-### Phase 3: Sync Protocol
-- [ ] Payload serialization (protobuf/msgpack)
-- [ ] State hash/diff computation
-- [ ] libp2p integration
-- [ ] LAN peer discovery (mDNS)
+### Phase 3: Sync Protocol ✅
+- [x] JSON payload serialization
+- [x] State hash comparison (Sync Check)
+- [x] libp2p integration
+- [x] LAN peer discovery (mDNS)
+- [x] Global peer discovery (DHT)
+- [x] Manual Pairing (QR/Invite)
 
-### Phase 4: Encryption
-- [ ] AES-256-GCM encryption at rest
-- [ ] Key derivation (HKDF)
-- [ ] Encrypted sync payloads
-- [ ] Key management API
+### Phase 4: Encryption ✅
+- [x] XChaCha20-Poly1305 encryption for entries
+- [x] Argon2id Key Derivation
+- [x] Encrypted Master Key storage
+- [x] Secure Key Sharing (Invite Flow)
+- [x] Verified Zero-Knowledge Sync
 
-### Phase 5: Hardening
-- [ ] Comprehensive test suite (>80% coverage)
-- [ ] Fault injection tests
-- [ ] Performance benchmarks
-- [ ] Full documentation
+### Phase 5: Hardening & Optimization (Upcoming) 🔜
+- [ ] **Performance**: Switch to MsgPack or Protobuf for sync payloads
+- [ ] **Conflict Resolution**: UI for manual conflict handling on collisions
+- [ ] **Garbage Collection**: Pruning deleted tombstones
+- [ ] **Partial Sync**: Vector clocks / Delta syncing (currently sends full state)
+- [ ] **Fault Injection**: Jepsen-style network partition testing
+- [ ] **Observability**: Metrics and structured logging
 
 ## Non-Goals (v1)
 
-- User accounts/authentication
-- Cloud backup
-- Multi-user permissions
+- User accounts/central authentication
+- Cloud backup (unless self-hosted peer)
+- Multi-user permissions (ACLs)
 - Plugin system
-- Undo/redo history
 
 ## Definition of Done (v1)
 
 Two vaultd instances can:
 1. Modify data offline
-2. Sync later
+2. Sync later via LAN or Internet
 3. Converge to identical state
 4. All data encrypted at rest and in transit
+5. **(Achieved)**

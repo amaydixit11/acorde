@@ -14,9 +14,11 @@ import (
 
 const KeyFileName = "keys.json"
 
-// KeyStore manages the master key
+// KeyStore manages the master encryption key for the vault.
+// It handles secure storage, retrieval, and lifecycle of the key material.
 type KeyStore interface {
-	// Initialize creates a new master key, encrypts it with password, and saves it
+	// Initialize creates a new master key, encrypts it with the provided password,
+	// and persists it to storage. It returns an error if the store is already initialized.
 	Initialize(password []byte) error
 
 	// InitializeWithKey creates a master key file with an existing key
@@ -48,7 +50,8 @@ type params struct {
 	Parallelism uint8  `json:"threads"`
 }
 
-// NewFileKeyStore creates a new FileKeyStore
+// NewFileKeyStore creates a new filesystem-backed KeyStore.
+// The key file will be stored at <dir>/keys.json.
 func NewFileKeyStore(dir string) *FileKeyStore {
 	return &FileKeyStore{dir: dir}
 }
