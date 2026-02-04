@@ -32,9 +32,11 @@ POST /entries
 Content-Type: application/json
 
 {
+  "id": "...",
   "type": "note",
   "content": "Hello World",
-  "tags": ["work", "important"]
+  "tags": ["work", "important"],
+  "owner": "12D3Koo..." 
 }
 ```
 
