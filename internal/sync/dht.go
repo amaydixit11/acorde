@@ -13,7 +13,7 @@ import (
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 )
 
-// RendezvousNamespace is the namespace for vaultd peer discovery
+// RendezvousNamespace is the namespace for acorde peer discovery
 const RendezvousNamespace = "/acorde/1.0.0"
 
 // DHTDiscovery provides global peer discovery via Kademlia DHT
@@ -108,7 +108,7 @@ startDiscovery:
 	go d.discoverPeers()
 }
 
-// discoverPeers continuously searches for vaultd peers
+// discoverPeers continuously searches for acorde peers
 func (d *DHTDiscovery) discoverPeers() {
 	defer d.wg.Done()
 
@@ -125,7 +125,7 @@ func (d *DHTDiscovery) discoverPeers() {
 	}
 }
 
-// findPeers searches for vaultd peers in the DHT
+// findPeers searches for acorde peers in the DHT
 func (d *DHTDiscovery) findPeers() {
 	if d.discovery == nil {
 		return

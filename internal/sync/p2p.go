@@ -115,7 +115,7 @@ func (s *p2pService) Start(ctx context.Context) error {
 		// We can append part of PeerID to service name?
 		// But mDNS service name must be constant for discovery?
 		// No, service *type* (Tag) is constant. Service *instance* name should be unique.
-		// mdns.NewMdnsService uses ServiceName as the Service Tag "_vaultd-discovery._udp".
+		// mdns.NewMdnsService uses ServiceName as the Service Tag "_acorde-discovery._udp".
 		// It manages instance names automatically (usually hostname).
 		// If we run multiple instances on same host, they might conflict if they try to bind same port? 
 		// SyncService binds to 0 (random port) by default in config, so ports are fine.

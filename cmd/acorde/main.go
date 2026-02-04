@@ -59,9 +59,9 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`vaultd - Local-first data engine with P2P sync
+	fmt.Println(`acorde - Local-first data engine with P2P sync
 
-Usage: vaultd <command> [options]
+Usage: acorde <command> [options]
 
 Commands:
   daemon   Start sync daemon (auto-discovers peers on LAN)
@@ -76,18 +76,18 @@ Commands:
   help     Show this help
 
 Encryption:
-  vaultd init   Initialize new encrypted vault
+  acorde init   Initialize new encrypted vault
 
 Daemon Mode:
-  vaultd daemon --name node1 --data ~/.vaultd-node1
-  vaultd daemon --name node2 --data ~/.vaultd-node2
+  acorde daemon --name node1 --data ~/.acorde-node1
+  acorde daemon --name node2 --data ~/.acorde-node2
 
 Entry Commands:
-  vaultd add --type note --content "Hello World" --tags work,important
-  vaultd list --type note
-  vaultd get <uuid>
-  vaultd update <uuid> --content "Updated"
-  vaultd delete <uuid>`)
+  acorde add --type note --content "Hello World" --tags work,important
+  acorde list --type note
+  acorde get <uuid>
+  acorde update <uuid> --content "Updated"
+  acorde delete <uuid>`)
 }
 
 func runWithEngine(cmd string, args []string) {
@@ -96,7 +96,7 @@ func runWithEngine(cmd string, args []string) {
 	// For simplicity, we assume default data dir if not specified, 
 	// OR we enforce standard flag usage. Let's stick to default.
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".vaultd") 
+	dataDir := filepath.Join(home, ".acorde") 
 	
 	// Check for custom data dir in args (simple check)
 	for i, arg := range args {
@@ -172,13 +172,13 @@ func (stdLogger) Printf(format string, v ...interface{}) {
 
 func cmdDaemon(args []string) {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
-	name := fs.String("name", "vaultd", "Node name for logging")
-	dataDir := fs.String("data", "", "Data directory (default: ~/.vaultd)")
+	name := fs.String("name", "acorde", "Node name for logging")
+	dataDir := fs.String("data", "", "Data directory (default: ~/.acorde)")
 	port := fs.Int("port", 0, "Port to listen on (0 = random)")
 	enableDHT := fs.Bool("dht", false, "Enable DHT for global peer discovery")
 	fs.Parse(args)
 
-	log.Printf("🚀 Starting vaultd daemon [%s]...", *name)
+	log.Printf("🚀 Starting acorde daemon [%s]...", *name)
 
 	// Create engine
 	cfg := engine.Config{DataDir: *dataDir}
@@ -210,7 +210,7 @@ func cmdDaemon(args []string) {
 
 	log.Printf("✅ Daemon started! Discovering peers on LAN...")
 	log.Printf("📋 Add entries in another terminal:")
-	log.Printf("   go run ./cmd/vaultd add --type note --content 'Hello!'")
+	log.Printf("   go run ./cmd/acorde add --type note --content 'Hello!'")
 
 	// Print peers periodically
 	go func() {
@@ -266,7 +266,7 @@ func cmdAdd(e engine.Engine, args []string) {
 
 func cmdGet(e engine.Engine, args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: vaultd get <uuid>")
+		fmt.Fprintln(os.Stderr, "Usage: acorde get <uuid>")
 		os.Exit(1)
 	}
 	id, _ := uuid.Parse(args[0])
@@ -310,7 +310,7 @@ func cmdList(e engine.Engine, args []string) {
 
 func cmdUpdate(e engine.Engine, args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: vaultd update <uuid> --content <new>")
+		fmt.Fprintln(os.Stderr, "Usage: acorde update <uuid> --content <new>")
 		os.Exit(1)
 	}
 	id, _ := uuid.Parse(args[0])
@@ -332,7 +332,7 @@ func cmdUpdate(e engine.Engine, args []string) {
 
 func cmdDelete(e engine.Engine, args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: vaultd delete <uuid>")
+		fmt.Fprintln(os.Stderr, "Usage: acorde delete <uuid>")
 		os.Exit(1)
 	}
 	id, _ := uuid.Parse(args[0])
@@ -423,7 +423,7 @@ func cmdInvite(args []string) {
 
 func cmdPair(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: vaultd pair <invite-code> [options]\n")
+		fmt.Fprintf(os.Stderr, "Usage: acorde pair <invite-code> [options]\n")
 		os.Exit(1)
 	}
 	inviteCode := args[0]
@@ -521,7 +521,7 @@ func cmdInit(args []string) {
 		if err != nil {
 			log.Fatalf("Failed to get user home directory: %v", err)
 		}
-		dir = filepath.Join(home, ".vaultd")
+		dir = filepath.Join(home, ".acorde")
 	}
 
 	store := crypto.NewFileKeyStore(dir)
@@ -568,7 +568,7 @@ func readPassword() ([]byte, error) {
 
 func cmdStatus(args []string) {
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".vaultd")
+	dataDir := filepath.Join(home, ".acorde")
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
@@ -613,8 +613,8 @@ func cmdStatus(args []string) {
 
 func cmdExport(args []string) {
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".vaultd")
-	outputFile := "vaultd-export.json"
+	dataDir := filepath.Join(home, ".acorde")
+	outputFile := "acorde-export.json"
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
@@ -683,7 +683,7 @@ func cmdExport(args []string) {
 
 func cmdServe(args []string) {
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".vaultd")
+	dataDir := filepath.Join(home, ".acorde")
 	port := "8080"
 
 	for i, arg := range args {

@@ -1,4 +1,4 @@
-// Package api provides an HTTP REST API for vaultd.
+// Package api provides an HTTP REST API for acorde.
 package api
 
 import (

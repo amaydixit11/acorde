@@ -5,7 +5,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Replica represents a vaultd replica's CRDT state.
+// Replica represents a acorde replica's CRDT state.
 // It contains the LWW-Set for entries and OR-Sets for tags (one per entry).
 type Replica struct {
 	entries *LWWSet                // LWW-Set of all entries

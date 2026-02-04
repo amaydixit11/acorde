@@ -1,10 +1,10 @@
 # Why CRDTs?
 
-vaultd uses **Conflict-free Replicated Data Types (CRDTs)** as the foundation of its synchronization engine. This document explains the rationale, the specific types used, and the guarantees they provide.
+acorde uses **Conflict-free Replicated Data Types (CRDTs)** as the foundation of its synchronization engine. This document explains the rationale, the specific types used, and the guarantees they provide.
 
 ## The Problem: Data Consistency in Distributed Systems
 
-In a local-first, peer-to-peer system like vaultd:
+In a local-first, peer-to-peer system like acorde:
 1.  **No Central Authority**: There is no server to act as the "source of truth".
 2.  **Concurrent Edits**: Users might edit the same note on their Phone and Laptop simultaneously while offline.
 3.  **Network Partitions**: Devices might sync out of order (Phone -> Tablet -> Laptop).

@@ -1,9 +1,9 @@
-// Package crdt provides conflict-free replicated data types for vaultd.
+// Package crdt provides conflict-free replicated data types for acorde.
 //
 // This package implements state-based CRDTs:
 // - LWWSet: Last-Writer-Wins Element Set for entries
 // - ORSet: Observed-Remove Set for tags
-// - Replica: State container for a vaultd replica
+// - Replica: State container for a acorde replica
 package crdt
 
 import (

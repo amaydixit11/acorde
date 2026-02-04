@@ -1,11 +1,11 @@
-# vaultd Examples
+# acorde Examples
 
-This directory contains example applications built with vaultd.
+This directory contains example applications built with acorde.
 
 ## Examples
 
 ### 1. notes-cli
-A minimal command-line notes app demonstrating vaultd as an **embedded Go library**.
+A minimal command-line notes app demonstrating acorde as an **embedded Go library**.
 
 ```bash
 cd notes-cli
@@ -19,20 +19,20 @@ go build
 A simple web UI that uses the **REST API** to manage notes.
 
 ```bash
-# Terminal 1: Start vaultd REST server
+# Terminal 1: Start acorde REST server
 cd ../..
-vaultd serve --port 8080
+acorde serve --port 8080
 
 # Terminal 2: Open the web app
 cd notes-web
 # Open index.html in browser
 ```
 
-## Using vaultd in Your App
+## Using acorde in Your App
 
 ### Option 1: Embed as Go Library
 ```go
-import "github.com/amaydixit11/vaultd/pkg/engine"
+import "github.com/amaydixit11/acorde/pkg/engine"
 
 e, _ := engine.New(engine.Config{DataDir: "./data"})
 defer e.Close()
@@ -47,7 +47,7 @@ entry, _ := e.AddEntry(engine.AddEntryInput{
 ### Option 2: Use REST API
 ```bash
 # Start server
-vaultd serve --port 8080
+acorde serve --port 8080
 
 # Create entry
 curl -X POST http://localhost:8080/entries \

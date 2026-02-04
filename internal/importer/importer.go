@@ -1,4 +1,4 @@
-// Package importer provides import/export functionality for vaultd.
+// Package importer provides import/export functionality for acorde.
 package importer
 
 import (

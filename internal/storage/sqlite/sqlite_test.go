@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewWithFile(t *testing.T) {
-	tmpFile := "/tmp/vaultd_test_" + uuid.New().String() + ".db"
+	tmpFile := "/tmp/acorde_test_" + uuid.New().String() + ".db"
 	defer os.Remove(tmpFile)
 
 	store, err := New(tmpFile)
@@ -292,7 +292,7 @@ func TestGetMaxTimestamp(t *testing.T) {
 }
 
 func TestPersistence(t *testing.T) {
-	tmpFile := "/tmp/vaultd_persist_test_" + uuid.New().String() + ".db"
+	tmpFile := "/tmp/acorde_persist_test_" + uuid.New().String() + ".db"
 	defer os.Remove(tmpFile)
 
 	// Create and populate

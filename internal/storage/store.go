@@ -30,7 +30,7 @@ type Operation struct {
 	Entry core.Entry
 }
 
-// Store defines the storage interface for vaultd
+// Store defines the storage interface for acorde
 // Storage is an optimization layer, not the source of truth - CRDTs are
 type Store interface {
 	// Put stores an entry with its tags

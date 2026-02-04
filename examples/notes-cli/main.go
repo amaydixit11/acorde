@@ -1,4 +1,4 @@
-// Package main is a simple CLI notes app demonstrating vaultd as an embedded library.
+// Package main is a simple CLI notes app demonstrating acorde as an embedded library.
 package main
 
 import (
@@ -16,7 +16,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize vaultd engine
+	// Initialize acorde engine
 	e, err := engine.New(engine.Config{
 		DataDir: "./notes-data",
 	})
@@ -138,7 +138,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`notes-cli - A simple notes app powered by vaultd
+	fmt.Println(`notes-cli - A simple notes app powered by acorde
 
 Usage: notes-cli <command> [args]
 

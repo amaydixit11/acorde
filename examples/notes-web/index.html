@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notes - vaultd Demo</title>
+    <title>Notes - acorde Demo</title>
     <style>
         :root {
             --bg: #0f0f0f;
@@ -190,7 +190,7 @@
 <body>
     <div class="container">
         <h1>📝 Notes</h1>
-        <p class="subtitle">Powered by vaultd - Local-first, P2P sync</p>
+        <p class="subtitle">Powered by acorde - Local-first, P2P sync</p>
 
         <div class="card">
             <form id="add-form">
@@ -250,7 +250,7 @@
             } catch (err) {
                 statusEl.textContent = '✗ Disconnected';
                 statusEl.className = 'status disconnected';
-                notesList.innerHTML = '<li class="empty">Cannot connect to server. Start with: vaultd serve</li>';
+                notesList.innerHTML = '<li class="empty">Cannot connect to server. Start with: acorde serve</li>';
             }
         }
 

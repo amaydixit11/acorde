@@ -1,4 +1,4 @@
-// Package engine provides the public API for vaultd.
+// Package engine provides the public API for acorde.
 //
 // This is the only package external applications should import.
 // All internal implementation details are hidden behind this interface.
@@ -13,7 +13,7 @@
 //
 //	entry, err := e.AddEntry(engine.AddEntryInput{
 //	    Type:    engine.Note,
-//	    Content: []byte("Hello, vaultd!"),
+//	    Content: []byte("Hello, acorde!"),
 //	    Tags:    []string{"demo"},
 //	})
 package engine
@@ -47,13 +47,13 @@ func (t EntryType) IsValid() bool {
 	}
 }
 
-// Entry is the canonical state unit in vaultd.
-// Content is opaque to vaultd - it doesn't parse or interpret it.
+// Entry is the canonical state unit in acorde.
+// Content is opaque to acorde - it doesn't parse or interpret it.
 // Tags is always a non-nil slice (may be empty).
 type Entry struct {
 	ID        uuid.UUID
 	Type      EntryType
-	Content   []byte   // Opaque to vaultd
+	Content   []byte   // Opaque to acorde
 	Tags      []string // Never nil, use []string{} for no tags
 	CreatedAt uint64   // Logical time (Lamport)
 	UpdatedAt uint64   // Logical time (Lamport)
@@ -85,8 +85,8 @@ type ListFilter struct {
 	Offset  int  // Skip first N results
 }
 
-// Engine is the main interface for vaultd.
-// Products embed this interface to interact with vaultd.
+// Engine is the main interface for acorde.
+// Products embed this interface to interact with acorde.
 type Engine interface {
 	// Entry lifecycle
 	AddEntry(input AddEntryInput) (Entry, error)
@@ -111,7 +111,7 @@ type Engine interface {
 // Config contains configuration options for the engine
 type Config struct {
 	// DataDir is the directory for storing vault data.
-	// If empty, defaults to ~/.vaultd
+	// If empty, defaults to ~/.acorde
 	DataDir string
 
 	// InMemory creates a temporary in-memory database.
@@ -122,7 +122,7 @@ type Config struct {
 	EncryptionKey *crypto.Key
 }
 
-// New creates a new vaultd Engine with the given configuration.
+// New creates a new acorde Engine with the given configuration.
 func New(cfg Config) (Engine, error) {
 	internalEngine, err := impl.New(impl.Config{
 		DataDir:       cfg.DataDir,

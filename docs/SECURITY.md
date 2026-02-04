@@ -2,10 +2,10 @@
 
 ## Threat Model
 
-**vaultd** assumes the following:
+**acorde** assumes the following:
 1.  **Device Compromise**: If an attacker gains full access to a running, unlocked device, they can read the data (Memory is not encrypted).
 2.  **Network Compromise**: An attacker on the network (MITM) cannot read sync traffic or inject invalid data.
-3.  **Storage Theft**: An attacker stealing the physical disk (`~/.vaultd`) cannot read data without the password.
+3.  **Storage Theft**: An attacker stealing the physical disk (`~/.acorde`) cannot read data without the password.
 4.  **Malicious Peer**: A malicious peer *without* the key can store/relay data but cannot read it. A malicious peer *with* the key can corrupt data (detected by AEAD authentication failure).
 
 ## Encryption Specifications
@@ -30,7 +30,7 @@ Entry content is encrypted using **AEAD** (Authenticated Encryption with Associa
     -   *Why?* Binds the ciphertext to a specific Entry ID. Prevents "replay" or "swapping" content between entries.
 
 ### 3. Key Storage
-Keys are stored in `~/.vaultd/keys.json`.
+Keys are stored in `~/.acorde/keys.json`.
 
 ```json
 {
@@ -46,7 +46,7 @@ Keys are stored in `~/.vaultd/keys.json`.
 
 ## Workflows
 
-### Initialization (`vaultd init`)
+### Initialization (`acorde init`)
 1.  User inputs Password.
 2.  Generate random `MasterKey` (32 bytes).
 3.  Generate random `Salt` (16 bytes).
@@ -54,7 +54,7 @@ Keys are stored in `~/.vaultd/keys.json`.
 5.  Encrypt `MasterKey` with `WrapperKey` (AAD = directory path).
 6.  Save to disk.
 
-### Unlocking (`vaultd daemon`)
+### Unlocking (`acorde daemon`)
 1.  User inputs Password.
 2.  Read `Salt` and `EncryptedMasterKey` from disk.
 3.  Derive `WrapperKey`.
@@ -62,7 +62,7 @@ Keys are stored in `~/.vaultd/keys.json`.
     -   If integrity check fails: Incorrect password.
 5.  Keep `MasterKey` in memory for duration of process.
 
-### Pairing (`vaultd pair`)
+### Pairing (`acorde pair`)
 1.  **Inviter** encrypts the `MasterKey` using a temporary ephemeral key (PeerID + Time).
 2.  **Inviter** encodes result into Invite Link.
 3.  **Receiver** imports Invite.

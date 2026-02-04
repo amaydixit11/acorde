@@ -65,7 +65,7 @@ type Entry struct {
 	Deleted   bool
 }
 
-// Engine is the main interface for vaultd
+// Engine is the main interface for acorde
 type Engine interface {
 	// Entry lifecycle
 	AddEntry(input AddEntryInput) (Entry, error)

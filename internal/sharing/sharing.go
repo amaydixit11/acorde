@@ -49,7 +49,7 @@ type EntryKey struct {
 // DeriveEntryKey derives a unique key for an entry from the master key
 func DeriveEntryKey(masterKey crypto.Key, entryID uuid.UUID) (*EntryKey, error) {
 	// Use HKDF to derive entry-specific key
-	h := hkdf.New(sha256.New, masterKey[:], entryID[:], []byte("vaultd-entry-key"))
+	h := hkdf.New(sha256.New, masterKey[:], entryID[:], []byte("acorde-entry-key"))
 
 	var key crypto.Key
 	if _, err := h.Read(key[:]); err != nil {
@@ -75,7 +75,7 @@ func ShareKeyWith(entryKey *EntryKey, myPrivate [32]byte, peerPublic PeerID) (*S
 	curve25519.ScalarMult(&sharedSecret, &myPrivate, (*[32]byte)(&peerPublic))
 
 	// Derive encryption key from shared secret
-	h := hkdf.New(sha256.New, sharedSecret[:], entryKey.EntryID[:], []byte("vaultd-share-key"))
+	h := hkdf.New(sha256.New, sharedSecret[:], entryKey.EntryID[:], []byte("acorde-share-key"))
 	
 	var wrapKey crypto.Key
 	if _, err := h.Read(wrapKey[:]); err != nil {
@@ -101,7 +101,7 @@ func RecoverSharedKey(shared *ShareableKey, entryID uuid.UUID, myPrivate [32]byt
 	curve25519.ScalarMult(&sharedSecret, &myPrivate, (*[32]byte)(&senderPublic))
 
 	// Derive unwrap key
-	h := hkdf.New(sha256.New, sharedSecret[:], entryID[:], []byte("vaultd-share-key"))
+	h := hkdf.New(sha256.New, sharedSecret[:], entryID[:], []byte("acorde-share-key"))
 	
 	var unwrapKey crypto.Key
 	if _, err := h.Read(unwrapKey[:]); err != nil {

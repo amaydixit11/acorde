@@ -1,4 +1,4 @@
-// Package sync provides peer-to-peer synchronization for vaultd.
+// Package sync provides peer-to-peer synchronization for acorde.
 //
 // It uses libp2p for networking and mDNS for local peer discovery.
 // The protocol uses state-based sync with hash comparison for efficiency.
@@ -17,7 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// ProtocolID is the libp2p protocol identifier for vaultd sync
+// ProtocolID is the libp2p protocol identifier for acorde sync
 const ProtocolID = "/acorde/sync/1.0.0"
 
 // ServiceName is the mDNS service name for discovery

@@ -1,6 +1,6 @@
 # Architecture Design
 
-**vaultd** is designed as a modular, layered system emphasizing local-first availability and conflict-free synchronization.
+**acorde** is designed as a modular, layered system emphasizing local-first availability and conflict-free synchronization.
 
 ## 1. System Layers
 
@@ -62,7 +62,7 @@ Large files are stored separately using content-addressing:
 ## 3. Conflict Resolution (CRDTs)
 
 ### Entries: LWW-Set
-For content updates, vaultd uses a **Last-Write-Wins** strategy based on Logical Clocks (Lamport Timestamps).
+For content updates, acorde uses a **Last-Write-Wins** strategy based on Logical Clocks (Lamport Timestamps).
 - If `Remote.Time > Local.Time`: Apply update.
 - If `Remote.Time == Local.Time`: Tie-break using `PeerID` (Deterministic).
 
@@ -73,7 +73,7 @@ Tags support concurrent additions and removals without lost updates.
 - **Merge**: A tag exists if it is in the `AddSet` and NOT in the `RemoveSet`.
 
 ### Delta Sync
-For efficiency, vaultd supports delta synchronization:
+For efficiency, acorde supports delta synchronization:
 - `EntriesSince(timestamp)`: Get entries modified after timestamp.
 - `DeltaState(since)`: Export only changed entries and tags.
 - `ApplyDelta(state)`: Merge remote delta into local replica.
@@ -81,12 +81,12 @@ For efficiency, vaultd supports delta synchronization:
 ## 4. Synchronization Protocol
 
 ### Discovery
-1. **mDNS**: Multicasts presence on local network. Service Tag: `_vaultd._tcp`.
-2. **DHT**: Advertises `PeerID` under the `/vaultd/1.0.0` namespace.
+1. **mDNS**: Multicasts presence on local network. Service Tag: `_acorde._tcp`.
+2. **DHT**: Advertises `PeerID` under the `/acorde/1.0.0` namespace.
 
 ### Handshake
 1. **Transport Security**: Noise handshake (Curve25519, ChaCha20, Poly1305).
-2. **Protocol ID**: `/vaultd/sync/1.0.0`.
+2. **Protocol ID**: `/acorde/sync/1.0.0`.
 
 ### Sync Flow
 1. **Alice** connects to **Bob**.
@@ -125,7 +125,7 @@ Real-time notifications via event bus:
 ### At Rest
 - **Algorithm**: XChaCha20-Poly1305
 - **Key Derivation**: Argon2id
-- **Storage**: Encrypted key in `~/.vaultd/keys.json`
+- **Storage**: Encrypted key in `~/.acorde/keys.json`
 
 ### Per-Entry Encryption
 For selective sharing:
@@ -136,8 +136,8 @@ For selective sharing:
 ## 7. Directory Structure
 
 ```
-vaultd/
-├── cmd/vaultd/          # CLI application
+acorde/
+├── cmd/acorde/          # CLI application
 ├── pkg/
 │   ├── engine/          # Public API
 │   │   ├── engine.go    # Core interface
