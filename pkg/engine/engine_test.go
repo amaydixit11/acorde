@@ -85,7 +85,7 @@ func TestAllEntryTypes(t *testing.T) {
 	e, _ := engine.New(engine.Config{InMemory: true})
 	defer e.Close()
 
-	types := []engine.EntryType{engine.Note, engine.Log, engine.File, engine.Event}
+	types := []engine.EntryType{engine.Note, engine.Log, engine.File, engine.EventEntry}
 
 	for _, entryType := range types {
 		entry, err := e.AddEntry(engine.AddEntryInput{
@@ -131,7 +131,7 @@ func TestErrorTypes(t *testing.T) {
 }
 
 func TestEntryTypeValidation(t *testing.T) {
-	validTypes := []engine.EntryType{engine.Note, engine.Log, engine.File, engine.Event}
+	validTypes := []engine.EntryType{engine.Note, engine.Log, engine.File, engine.EventEntry}
 	for _, t := range validTypes {
 		if !t.IsValid() {
 			panic("expected valid type: " + string(t))

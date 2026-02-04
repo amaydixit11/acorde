@@ -341,3 +341,60 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// SearchOptions for full-text search
+type SearchOptions struct {
+	Type  *core.EntryType
+	Limit int
+}
+
+// Search performs full-text search on entry content
+func (s *SQLiteStore) Search(query string, opts SearchOptions) ([]core.Entry, error) {
+	// Use FTS5 MATCH query
+	sqlQuery := `
+		SELECT e.id, e.type, e.content, e.created_at, e.updated_at, e.deleted
+		FROM entries e
+		JOIN entries_fts fts ON e.rowid = fts.rowid
+		WHERE entries_fts MATCH ? AND e.deleted = 0
+	`
+	args := []interface{}{query}
+
+	if opts.Type != nil {
+		sqlQuery += " AND e.type = ?"
+		args = append(args, string(*opts.Type))
+	}
+
+	sqlQuery += " ORDER BY rank LIMIT ?"
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []core.Entry{}
+	for rows.Next() {
+		var entry core.Entry
+		var idStr, typeStr string
+		var deleted int
+
+		if err := rows.Scan(&idStr, &typeStr, &entry.Content,
+			&entry.CreatedAt, &entry.UpdatedAt, &deleted); err != nil {
+			return nil, fmt.Errorf("failed to scan entry: %w", err)
+		}
+
+		entry.ID, _ = uuid.Parse(idStr)
+		entry.Type = core.EntryType(typeStr)
+		entry.Deleted = deleted != 0
+		entry.Tags = []string{} // Tags loaded separately if needed
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
