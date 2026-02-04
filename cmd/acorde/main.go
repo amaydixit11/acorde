@@ -178,6 +178,7 @@ func cmdDaemon(args []string) {
 	name := fs.String("name", "acorde", "Node name for logging")
 	dataDir := fs.String("data", "", "Data directory (default: ~/.acorde)")
 	port := fs.Int("port", 0, "Port to listen on (0 = random)")
+	apiPort := fs.Int("api-port", 0, "Port for REST API (0 = disabled)")
 	enableDHT := fs.Bool("dht", false, "Enable DHT for global peer discovery")
 	fs.Parse(args)
 
@@ -234,6 +235,17 @@ func cmdDaemon(args []string) {
 			}
 		}
 	}()
+
+	// Start API server if requested
+	if *apiPort > 0 {
+		apiServer := api.New(e)
+		go func() {
+			log.Printf("🚀 Starting API server on http://localhost:%d", *apiPort)
+			if err := apiServer.ListenAndServe(fmt.Sprintf(":%d", *apiPort)); err != nil {
+				log.Printf("API Server error: %v", err)
+			}
+		}()
+	}
 
 	// Wait for interrupt
 	sigCh := make(chan os.Signal, 1)
