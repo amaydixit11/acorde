@@ -129,3 +129,13 @@ func (s *ORSet) AllRemoves() []TagToken {
 	}
 	return result
 }
+
+// RemoveToken adds a token to the remove set (for delta apply).
+func (s *ORSet) RemoveToken(token uuid.UUID) {
+	for tt := range s.adds {
+		if tt.Token == token {
+			s.removes[tt] = struct{}{}
+		}
+	}
+}
+

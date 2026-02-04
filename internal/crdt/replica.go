@@ -338,3 +338,69 @@ type ErrEntryDeleted struct {
 func (e *ErrEntryDeleted) Error() string {
 	return "entry is deleted: " + e.ID.String()
 }
+
+// EntriesSince returns entries updated after the given timestamp.
+// Used for delta sync.
+func (r *Replica) EntriesSince(since uint64) []LWWElement {
+	var result []LWWElement
+	for _, elem := range r.entries.AllElements() {
+		if elem.Timestamp > since {
+			result = append(result, elem)
+		}
+	}
+	return result
+}
+
+// DeltaState returns only changes since the given timestamp.
+func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
+	entries := r.EntriesSince(since)
+	
+	// Collect tags for changed entries
+	tags := make(map[uuid.UUID]TagSetState)
+	for _, elem := range entries {
+		if tagSet, ok := r.tags[elem.Entry.ID]; ok {
+			tags[elem.Entry.ID] = TagSetState{
+				Adds:    tagSet.AllAdds(),
+				Removes: tagSet.AllRemoves(),
+			}
+		}
+	}
+	
+	return DeltaReplicaState{
+		Entries:   entries,
+		Tags:      tags,
+		ClockTime: r.clock.Now(),
+		Since:     since,
+	}
+}
+
+// DeltaReplicaState contains only entries changed since a given time.
+type DeltaReplicaState struct {
+	Entries   []LWWElement              `json:"entries"`
+	Tags      map[uuid.UUID]TagSetState `json:"tags"`
+	ClockTime uint64                    `json:"clock_time"`
+	Since     uint64                    `json:"since"`
+}
+
+// ApplyDelta merges a delta state into this replica.
+func (r *Replica) ApplyDelta(delta DeltaReplicaState) {
+	// Apply entries
+	for _, elem := range delta.Entries {
+		r.entries.Add(elem.Entry)
+	}
+	
+	// Apply tags
+	for id, tagState := range delta.Tags {
+		tagSet := r.getOrCreateTagSet(id)
+		for _, token := range tagState.Adds {
+			tagSet.AddWithToken(token.Tag, token.Token)
+		}
+		for _, token := range tagState.Removes {
+			tagSet.RemoveToken(token.Token)
+		}
+	}
+	
+	// Update clock
+	r.clock.Update(delta.ClockTime)
+}
+
