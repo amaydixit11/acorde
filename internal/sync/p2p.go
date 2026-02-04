@@ -65,10 +65,15 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 		listenAddrs[i] = ma
 	}
 
-	// Create libp2p host
-	h, err := libp2p.New(
+	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenAddrs...),
-	)
+	}
+	if cfg.PrivateKey != nil {
+		opts = append(opts, libp2p.Identity(cfg.PrivateKey))
+	}
+
+	// Create libp2p host
+	h, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}

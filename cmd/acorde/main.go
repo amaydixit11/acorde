@@ -16,11 +16,14 @@ import (
 	"golang.org/x/term"
 
 	"github.com/amaydixit11/acorde/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/sync"
 	"github.com/amaydixit11/acorde/pkg/api"
 	"github.com/amaydixit11/acorde/pkg/crypto"
-	"github.com/amaydixit11/acorde/internal/sync"
 	"github.com/amaydixit11/acorde/pkg/engine"
 	"github.com/google/uuid"
+	
+	p2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func main() {
@@ -195,6 +198,13 @@ func cmdDaemon(args []string) {
 	}
 	syncCfg.Logger = stdLogger{}
 	syncCfg.EnableDHT = *enableDHT
+
+	// Load or generate identity key
+	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("Failed to load identity key: %v", err)
+	}
+	syncCfg.PrivateKey = privKey
 
 	adapter := sync.NewEngineAdapter(&syncableEngine{e})
 	svc, err := sync.NewP2PService(adapter, syncCfg)
@@ -379,6 +389,14 @@ func cmdInvite(args []string) {
 		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
 	}
 	syncCfg.EnableMDNS = false
+
+	// Load identity key (must match daemon if running)
+	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("Failed to load identity key: %v", err)
+	}
+	syncCfg.PrivateKey = privKey
+
 	provider := sync.NewEngineAdapter(&syncableEngine{e})
 	svc, err := sync.NewP2PService(provider, syncCfg)
 	if err != nil {
@@ -450,6 +468,13 @@ func cmdPair(args []string) {
 		syncCfg.AllowlistPath = *dataDir // Use data dir name for peer file location
 	}
 	
+	// Load identity key to ensure we match the daemon's ID
+	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("Failed to load identity key: %v", err)
+	}
+	syncCfg.PrivateKey = privKey
+
 	provider := sync.NewEngineAdapter(&syncableEngine{e})
 	svc, err := sync.NewP2PService(provider, syncCfg)
 	if err != nil {
@@ -738,5 +763,59 @@ func cmdServe(args []string) {
 	if err := apiServer.ListenAndServe(":" + port); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+// loadOrGenerateKey loads the private key from disk or generates a new one.
+// It also ensures node_id file matches the key.
+func loadOrGenerateKey(dataDir string) (p2pcrypto.PrivKey, peer.ID, error) {
+	keyPath := filepath.Join(dataDir, "node_key")
+	nodeIDPath := filepath.Join(dataDir, "node_id")
+
+	// Try to load key
+	if keyBytes, err := os.ReadFile(keyPath); err == nil {
+		privKey, err := p2pcrypto.UnmarshalPrivateKey(keyBytes)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to unmarshal key: %w", err)
+		}
+		
+		id, err := peer.IDFromPrivateKey(privKey)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to derive peer ID: %w", err)
+		}
+		return privKey, id, nil
+	}
+
+	// Generate new key
+	privKey, _, err := p2pcrypto.GenerateKeyPair(p2pcrypto.Ed25519, -1)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Save key
+	keyBytes, err := p2pcrypto.MarshalPrivateKey(privKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to marshal key: %w", err)
+	}
+
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return nil, "", fmt.Errorf("failed to create data dir: %w", err)
+	}
+
+	// Set stricter permissions for private key
+	if err := os.WriteFile(keyPath, keyBytes, 0600); err != nil {
+		return nil, "", fmt.Errorf("failed to write key: %w", err)
+	}
+
+	// Save PeerID to node_id file for Engine conformance
+	id, err := peer.IDFromPrivateKey(privKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to derive peer ID: %w", err)
+	}
+
+	if err := os.WriteFile(nodeIDPath, []byte(id.String()), 0644); err != nil {
+		log.Printf("Warning: failed to write node_id: %v", err)
+	}
+
+	return privKey, id, nil
 }
 
