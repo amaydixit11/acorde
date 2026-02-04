@@ -51,13 +51,14 @@ func (t EntryType) IsValid() bool {
 // Content is opaque to acorde - it doesn't parse or interpret it.
 // Tags is always a non-nil slice (may be empty).
 type Entry struct {
-	ID        uuid.UUID
-	Type      EntryType
-	Content   []byte   // Opaque to acorde
-	Tags      []string // Never nil, use []string{} for no tags
-	CreatedAt uint64   // Logical time (Lamport)
-	UpdatedAt uint64   // Logical time (Lamport)
-	Deleted   bool     // Tombstone for CRDT
+	ID        uuid.UUID `json:"id"`
+	Type      EntryType `json:"type"`
+	Content   []byte    `json:"content"` // Opaque to acorde
+	Tags      []string  `json:"tags"`    // Never nil, use []string{} for no tags
+	CreatedAt uint64    `json:"created_at"` // Logical time (Lamport)
+	UpdatedAt uint64    `json:"updated_at"` // Logical time (Lamport)
+	Deleted   bool      `json:"deleted"`    // Tombstone for CRDT
+	Owner     string    `json:"owner"`      // PeerID of creator/owner
 }
 
 // AddEntryInput contains parameters for adding a new entry
@@ -200,7 +201,7 @@ func (w *engineWrapper) ListEntries(filter ListFilter) ([]Entry, error) {
 
 func (w *engineWrapper) GetSyncPayload() ([]byte, error) {
 	return w.impl.GetSyncPayload()
-}
+	}
 
 func (w *engineWrapper) ApplyRemotePayload(payload []byte) error {
 	return w.impl.ApplyRemotePayload(payload)
@@ -283,5 +284,6 @@ func fromInternalEntry(e impl.Entry) Entry {
 		CreatedAt: e.CreatedAt,
 		UpdatedAt: e.UpdatedAt,
 		Deleted:   e.Deleted,
+		Owner:     e.Owner,
 	}
 }
