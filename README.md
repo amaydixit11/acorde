@@ -1,6 +1,6 @@
-# Acorde
+# ACORDE
 
-**Acorde** (formerly vaultd) is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
+**ACORDE** (Always-Available Conflict-free Offline-first Replicated Distributed Data Synchronization Engine) is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg?logo=go)
@@ -18,6 +18,8 @@
 - **Versioning**: Full history tracking. Undo changes or audit usage.
 - **Access Control**: Owner/Reader/Writer permissions per entry.
 - **Multi-Vault**: Manage separate vaults (Work/Personal) in one daemon.
+- **Webhooks**: Register HTTP callbacks for real-time events.
+- **Import/Export**: Migrate data using JSON, CSV, or Markdown formats.
 
 ### Sync
 - **mDNS**: Automatic discovery on local LAN.
@@ -291,7 +293,7 @@ acorde/
 - [x] Phase 5: REST API & Event Hooks
 - [x] Phase 6: Query Language & Search
 - [x] Phase 7: Blob Storage & Per-Entry Encryption
-- [x] Phase 8: Schema Validation, Versioning & ACLs
+- [x] Phase 8: Schema Validation, Versioning, ACLs, Webhooks & Import/Export
 - [ ] Phase 9: Mobile SDKs (iOS, Android)
 - [ ] Phase 10: Web Assembly Build
 
