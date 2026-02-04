@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/amaydixit11/vaultd/internal/crdt"
+	"github.com/amaydixit11/vaultd/pkg/api"
 	"github.com/amaydixit11/vaultd/pkg/crypto"
 	"github.com/amaydixit11/vaultd/internal/sync"
 	"github.com/amaydixit11/vaultd/pkg/engine"
@@ -40,6 +41,12 @@ func main() {
 		cmdPair(args)
 	case "init":
 		cmdInit(args)
+	case "status":
+		cmdStatus(args)
+	case "export":
+		cmdExport(args)
+	case "serve":
+		cmdServe(args)
 	case "add", "get", "list", "update", "delete":
 		runWithEngine(cmd, args)
 	case "help":
@@ -58,6 +65,9 @@ Usage: vaultd <command> [options]
 
 Commands:
   daemon   Start sync daemon (auto-discovers peers on LAN)
+  serve    Start REST API server (--port 8080)
+  status   Show vault status (entry count, sync state)
+  export   Export all entries to JSON
   add      Add a new entry
   get      Get an entry by ID  
   list     List entries
@@ -555,3 +565,174 @@ func readPassword() ([]byte, error) {
 	}
 	return term.ReadPassword(fd)
 }
+
+func cmdStatus(args []string) {
+	home, _ := os.UserHomeDir()
+	dataDir := filepath.Join(home, ".vaultd")
+
+	for i, arg := range args {
+		if arg == "--data" && i+1 < len(args) {
+			dataDir = args[i+1]
+			break
+		}
+	}
+
+	cfg := engine.Config{DataDir: dataDir}
+	
+	// Try to unlock if encrypted
+	store := crypto.NewFileKeyStore(dataDir)
+	if store.IsInitialized() {
+		fmt.Print("🔒 Vault is encrypted. Enter password: ")
+		password, err := readPassword()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println()
+
+		key, err := store.Unlock(password)
+		if err != nil {
+			log.Fatalf("Failed to unlock: %v", err)
+		}
+		cfg.EncryptionKey = &key
+	}
+
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to open vault: %v", err)
+	}
+	defer e.Close()
+
+	entries, _ := e.ListEntries(engine.ListFilter{})
+
+	fmt.Println("📊 Vault Status")
+	fmt.Println("───────────────")
+	fmt.Printf("  Data Dir:    %s\n", dataDir)
+	fmt.Printf("  Encrypted:   %v\n", store.IsInitialized())
+	fmt.Printf("  Entries:     %d\n", len(entries))
+}
+
+func cmdExport(args []string) {
+	home, _ := os.UserHomeDir()
+	dataDir := filepath.Join(home, ".vaultd")
+	outputFile := "vaultd-export.json"
+
+	for i, arg := range args {
+		if arg == "--data" && i+1 < len(args) {
+			dataDir = args[i+1]
+		}
+		if arg == "--file" && i+1 < len(args) {
+			outputFile = args[i+1]
+		}
+	}
+
+	cfg := engine.Config{DataDir: dataDir}
+	
+	store := crypto.NewFileKeyStore(dataDir)
+	if store.IsInitialized() {
+		fmt.Print("🔒 Vault is encrypted. Enter password: ")
+		password, err := readPassword()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println()
+
+		key, err := store.Unlock(password)
+		if err != nil {
+			log.Fatalf("Failed to unlock: %v", err)
+		}
+		cfg.EncryptionKey = &key
+	}
+
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to open vault: %v", err)
+	}
+	defer e.Close()
+
+	entries, _ := e.ListEntries(engine.ListFilter{})
+
+	// Export as JSON
+	type exportEntry struct {
+		ID        string   `json:"id"`
+		Type      string   `json:"type"`
+		Content   string   `json:"content"`
+		Tags      []string `json:"tags"`
+		CreatedAt uint64   `json:"created_at"`
+		UpdatedAt uint64   `json:"updated_at"`
+	}
+
+	export := make([]exportEntry, len(entries))
+	for i, e := range entries {
+		export[i] = exportEntry{
+			ID:        e.ID.String(),
+			Type:      string(e.Type),
+			Content:   string(e.Content),
+			Tags:      e.Tags,
+			CreatedAt: e.CreatedAt,
+			UpdatedAt: e.UpdatedAt,
+		}
+	}
+
+	data, _ := json.MarshalIndent(export, "", "  ")
+	if err := os.WriteFile(outputFile, data, 0600); err != nil {
+		log.Fatalf("Failed to write export: %v", err)
+	}
+
+	fmt.Printf("✅ Exported %d entries to %s\n", len(entries), outputFile)
+}
+
+func cmdServe(args []string) {
+	home, _ := os.UserHomeDir()
+	dataDir := filepath.Join(home, ".vaultd")
+	port := "8080"
+
+	for i, arg := range args {
+		if arg == "--data" && i+1 < len(args) {
+			dataDir = args[i+1]
+		}
+		if arg == "--port" && i+1 < len(args) {
+			port = args[i+1]
+		}
+	}
+
+	cfg := engine.Config{DataDir: dataDir}
+	
+	store := crypto.NewFileKeyStore(dataDir)
+	if store.IsInitialized() {
+		fmt.Print("🔒 Vault is encrypted. Enter password: ")
+		password, err := readPassword()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println()
+
+		key, err := store.Unlock(password)
+		if err != nil {
+			log.Fatalf("Failed to unlock: %v", err)
+		}
+		cfg.EncryptionKey = &key
+	}
+
+	e, err := engine.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to open vault: %v", err)
+	}
+	defer e.Close()
+
+	// Import api package
+	apiServer := api.New(e)
+
+	fmt.Printf("🚀 Starting API server on http://localhost:%s\n", port)
+	fmt.Printf("   GET    /entries\n")
+	fmt.Printf("   POST   /entries\n")
+	fmt.Printf("   GET    /entries/:id\n")
+	fmt.Printf("   PUT    /entries/:id\n")
+	fmt.Printf("   DELETE /entries/:id\n")
+	fmt.Printf("   GET    /status\n")
+	fmt.Printf("   GET    /events (SSE)\n")
+
+	if err := apiServer.ListenAndServe(":" + port); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
+}
+
