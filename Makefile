@@ -14,5 +14,15 @@ clean:
 	go clean
 	rm -f $(BINARY_NAME)
 
+
+release:
+	@./scripts/build_release.sh
+
+docker:
+	docker build -t acorde .
+
+docker-run:
+	docker-compose up -d
+
 run: build
 	./$(BINARY_NAME) daemon
