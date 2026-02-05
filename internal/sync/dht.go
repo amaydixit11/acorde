@@ -57,7 +57,7 @@ func (d *DHTDiscovery) Start(peerNotify func(peer.AddrInfo)) error {
 	d.peerNotify = peerNotify
 
 	// Bootstrap the DHT
-	d.logger.Printf("DHT: bootstrapping...")
+	d.logger.Infof("DHT: bootstrapping...")
 	if err := d.dht.Bootstrap(d.ctx); err != nil {
 		return fmt.Errorf("failed to bootstrap DHT: %w", err)
 	}
@@ -86,11 +86,11 @@ func (d *DHTDiscovery) waitForBootstrap() {
 		case <-d.ctx.Done():
 			return
 		case <-timeout:
-			d.logger.Printf("DHT: bootstrap timeout (0 peers). Discovery may be limited until better connectivity.")
+			d.logger.Infof("DHT: bootstrap timeout (0 peers). Discovery may be limited until better connectivity.")
 			goto startDiscovery
 		case <-ticker.C:
 			if len(d.host.Network().Peers()) > 0 {
-				d.logger.Printf("DHT: connected to %d peers", len(d.host.Network().Peers()))
+				d.logger.Infof("DHT: connected to %d peers", len(d.host.Network().Peers()))
 				goto startDiscovery
 			}
 		}
@@ -100,7 +100,7 @@ startDiscovery:
 	d.discovery = drouting.NewRoutingDiscovery(d.dht)
 
 	// Advertise ourselves
-	d.logger.Printf("DHT: advertising at %s", RendezvousNamespace)
+	d.logger.Infof("DHT: advertising at %s", RendezvousNamespace)
 	dutil.Advertise(d.ctx, d.discovery, RendezvousNamespace)
 
 	// Start discovering peers
@@ -147,7 +147,7 @@ func (d *DHTDiscovery) findPeers() {
 			continue // No addresses
 		}
 
-		d.logger.Printf("DHT: found peer %s", pi.ID.String()[:8])
+		d.logger.Debugf("DHT: found peer %s", pi.ID.String()[:8])
 		if d.peerNotify != nil {
 			d.peerNotify(pi)
 		}

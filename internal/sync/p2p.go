@@ -48,10 +48,10 @@ type p2pService struct {
 	wg     gosync.WaitGroup
 }
 
-// noopLogger is a no-op logger
 type noopLogger struct{}
-
-func (noopLogger) Printf(format string, v ...interface{}) {}
+func (noopLogger) Debugf(format string, v ...interface{}) {}
+func (noopLogger) Infof(format string, v ...interface{}) {}
+func (noopLogger) Errorf(format string, v ...interface{}) {}
 
 // NewP2PService creates a new libp2p-based sync service
 func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
@@ -91,7 +91,8 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 			return nil, fmt.Errorf("failed to load allowlist: %w", err)
 		}
 		allowlist = al
-		logger.Printf("Allowlist enabled (strict=%v): %d peers loaded", cfg.StrictAllowlist, al.Count())
+		allowlist = al
+		logger.Infof("Allowlist enabled (strict=%v): %d peers loaded", cfg.StrictAllowlist, al.Count())
 	}
 
 	return &p2pService{
@@ -131,7 +132,8 @@ func (s *p2pService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start mDNS: %w", err)
 		}
 		s.mdnsService = mdnsService
-		s.logger.Printf("mDNS discovery enabled")
+		s.mdnsService = mdnsService
+		s.logger.Infof("mDNS discovery enabled")
 	}
 
 	// Start DHT discovery
@@ -145,14 +147,15 @@ func (s *p2pService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start DHT: %w", err)
 		}
 		s.dhtDiscovery = dhtDiscovery
-		s.logger.Printf("DHT discovery enabled (global)")
+		s.dhtDiscovery = dhtDiscovery
+		s.logger.Infof("DHT discovery enabled (global)")
 	}
 
 	// Start periodic sync
 	s.wg.Add(1)
 	go s.syncLoop()
 
-	s.logger.Printf("sync service started, listening on %v", s.host.Addrs())
+	s.logger.Infof("sync service started, listening on %v", s.host.Addrs())
 	return nil
 }
 
@@ -373,7 +376,7 @@ func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
 			return err
 		}
 		atomic.AddInt64(&s.syncSuccesses, 1)
-		s.logger.Printf("synced with peer %s", peerID.String()[:8])
+		s.logger.Infof("synced with peer %s (received %d bytes)", peerID.String()[:8], len(resp.State))
 		return nil
 
 	case MsgStateRequest:
@@ -410,7 +413,8 @@ func (s *p2pService) HandlePeerFound(pi peer.AddrInfo) {
 	s.peersMu.Unlock()
 
 	if !exists {
-		s.logger.Printf("discovered peer %s", pi.ID.String()[:8])
+		s.logger.Infof("discovered peer %s", pi.ID.String()[:8])
+		s.logger.Debugf("peer addresses: %v", pi.Addrs)
 	}
 
 	// Connect to peer
@@ -424,8 +428,9 @@ func (s *p2pService) HandlePeerFound(pi peer.AddrInfo) {
 
 	// Trigger sync
 	go func() {
+		s.logger.Debugf("starting sync with new peer %s", pi.ID.String()[:8])
 		if err := s.SyncWith(s.ctx, pi.ID); err != nil {
-			s.logger.Printf("sync with %s failed: %v", pi.ID.String()[:8], err)
+			s.logger.Errorf("sync with %s failed: %v", pi.ID.String()[:8], err)
 		}
 	}()
 }
@@ -439,9 +444,10 @@ func (s *p2pService) handleStream(stream network.Stream) {
 
 	// Check allowlist if enabled
 	if !s.checkAllowlist(stream.Conn().RemotePeer()) {
-		s.logger.Printf("rejected connection from unauthorized peer %s", stream.Conn().RemotePeer())
+		s.logger.Errorf("rejected connection from unauthorized peer %s", stream.Conn().RemotePeer())
 		return
 	}
+	s.logger.Debugf("handling stream from %s", stream.Conn().RemotePeer().String()[:8])
 
 	// Read incoming message
 	msg, err := readMessage(stream)
@@ -533,8 +539,9 @@ func (s *p2pService) syncLoop() {
 			for _, peerID := range s.Peers() {
 				peerID := peerID // Capture for goroutine
 				go func() {
+					s.logger.Debugf("periodic sync executing for %s", peerID.String()[:8])
 					if err := s.SyncWith(s.ctx, peerID); err != nil {
-						s.logger.Printf("periodic sync with %s failed: %v", peerID.String()[:8], err)
+						s.logger.Errorf("periodic sync with %s failed: %v", peerID.String()[:8], err)
 					}
 				}()
 			}

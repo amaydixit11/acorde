@@ -52,10 +52,16 @@ type Config struct {
 	PrivateKey crypto.PrivKey
 }
 
-// Logger interface for sync events
-type Logger interface {
-	Printf(format string, v ...interface{})
+// LeveledLogger interface for detailed sync logging
+type LeveledLogger interface {
+	Debugf(format string, v ...interface{})
+	Infof(format string, v ...interface{})
+	Errorf(format string, v ...interface{})
 }
+
+// Logger is an alias for backward compatibility (temporarily)
+// We will upgrade the usage to LeveledLogger methods
+type Logger = LeveledLogger
 
 // DefaultConfig returns the default sync configuration
 func DefaultConfig() Config {
