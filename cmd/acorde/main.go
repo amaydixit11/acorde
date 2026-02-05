@@ -193,6 +193,7 @@ func cmdDaemon(args []string) {
 	port := fs.Int("port", 0, "Port to listen on (0 = random)")
 	apiPort := fs.Int("api-port", 0, "Port for REST API (0 = disabled)")
 	enableDHT := fs.Bool("dht", false, "Enable DHT for global peer discovery")
+	enableMDNS := fs.Bool("mdns", true, "Enable mDNS for local discovery")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
 
@@ -213,6 +214,7 @@ func cmdDaemon(args []string) {
 	}
 	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 	syncCfg.EnableDHT = *enableDHT
+	syncCfg.EnableMDNS = *enableMDNS
 
 	// Load or generate identity key
 	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
