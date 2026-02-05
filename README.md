@@ -37,10 +37,13 @@
 ### Storage
 - **Per-Entry Encryption**: Share specific entries with specific peers.
 - **Blob Storage**: Content-addressed storage for large files (images, PDFs).
-
 ## 📦 Installation
 
+> [!TIP]
+> **New!** Check out the [Setup Guide](docs/setup.md) for Docker, Windows, and detailed build instructions.
+
 ```bash
+
 # Install CLI
 go install github.com/amaydixit11/acorde/cmd/acorde@latest
 
