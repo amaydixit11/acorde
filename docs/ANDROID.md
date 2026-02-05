@@ -39,6 +39,25 @@ go build -o acorde .
 ./acorde help
 ```
 
+## Troubleshooting
+
+### "invalid reference to net.zoneCache" Error
+
+If you see this error during build (common on Go 1.23+ which Termux uses), you need to patch a dependency.
+
+Run this command inside the `acorde` directory before building:
+
+```bash
+# Replace the broken library with a patched version
+go mod edit -replace github.com/wlynxg/anet=github.com/stn1slv/anet@v0.0.3
+go mod tidy
+```
+
+Then try building again:
+```bash
+go build -o acorde ./cmd/acorde
+```
+
 ## Running the Daemon
 
 To start the sync daemon on your phone:
