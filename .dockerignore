@@ -1,0 +1,15 @@
+.git
+.gitignore
+.DS_Store
+*.md
+bin/
+build/
+data/
+tmp/
+docs/
+tests/
+docker-compose.yml
+Makefile
+LICENSE
+README.md
+scripts/

@@ -1,0 +1,18 @@
+services:
+  acorde:
+    build: .
+    image: acorde:latest
+    container_name: acorde-node
+    restart: unless-stopped
+    ports:
+      - "4001:4001" # P2P
+      - "7331:7331" # API
+    volumes:
+      - ./data:/home/acorde/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7331/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Note: Command args match the Dockerfile CMD but are safe to override here if needed
+    command: ["daemon", "--name", "docker-node", "--data", "./data", "--port", "4001", "--api-port", "7331", "--mdns=false"]
