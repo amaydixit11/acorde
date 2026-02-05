@@ -45,31 +45,31 @@ go build -o acorde .
 
 This error happens because the installed Go version (likely 1.23+) is too new for the networking library used (`anet`). The most reliable fix in Termux is to manually patch the library file.
 
-1.  **Make the file writable**:
+1.  **Grant write permission** to the library file:
     ```bash
     chmod +w ~/go/pkg/mod/github.com/wlynxg/anet@v0.0.5/interface_android.go
     ```
 
-2.  **Edit the file**:
-    ```bash
-    nano ~/go/pkg/mod/github.com/wlynxg/anet@v0.0.5/interface_android.go
+2.  **Edit the file** (`nano ~/go/pkg/mod/github.com/wlynxg/anet@v0.0.5/interface_android.go`):
+
+    **Step A: Comment out the `linkname` directives** (around line 160):
+    ```go
+    // //go:linkname zoneCache net.zoneCache
+    // var zoneCache ipv6ZoneCache
+
+    // //go:linkname zoneCacheX golang.org/x/net/internal/socket.zoneCache
+    // var zoneCacheX ipv6ZoneCache
     ```
 
-3.  **Find and Comment Out Code**:
-    Find the lines referencing `zoneCache` (usually `//go:linkname` and the `var zoneCache` line).
-    **Comment them out** (add `//` at the start of the line).
-
-    Also find the function that uses `zoneCache`. It usually looks like:
+    **Step B: Comment out `zoneCache.update` calls** inside `Interfaces()` (around line 43) and `InterfaceByName()` (around line 98):
     ```go
-    func (i *Interface) linkLocal() ... {
-        // ... code using zoneCache ...
+    if len(ift) != 0 {
+    //    zoneCache.update(ift, true)
+    //    zoneCacheX.update(ift, true)
     }
     ```
-    Change the function body to just return `nil` or an empty result if possible, or comment out the `zoneCache` logic inside it. 
-    
-    *Note: This disables some Android-specific network optimizations but allows the app to compile and run.*
 
-4.  **Rebuild**:
+3.  **Rebuild**:
     ```bash
     go build -o acorde ./cmd/acorde
     ```
