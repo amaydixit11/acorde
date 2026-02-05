@@ -167,10 +167,23 @@ func (s *syncableEngine) ApplySyncState(state crdt.ReplicaState) error {
 	return s.ApplyRemotePayload(payload)
 }
 
-type stdLogger struct{}
+type sysLogger struct {
+	label string
+	verbose bool
+}
 
-func (stdLogger) Printf(format string, v ...interface{}) {
-	log.Printf(format, v...)
+func (l *sysLogger) Debugf(format string, v ...interface{}) {
+	if l.verbose {
+		log.Printf("[DEBUG] "+format, v...)
+	}
+}
+
+func (l *sysLogger) Infof(format string, v ...interface{}) {
+	log.Printf("[INFO] "+format, v...)
+}
+
+func (l *sysLogger) Errorf(format string, v ...interface{}) {
+	log.Printf("[ERROR] "+format, v...)
 }
 
 func cmdDaemon(args []string) {
@@ -180,6 +193,7 @@ func cmdDaemon(args []string) {
 	port := fs.Int("port", 0, "Port to listen on (0 = random)")
 	apiPort := fs.Int("api-port", 0, "Port for REST API (0 = disabled)")
 	enableDHT := fs.Bool("dht", false, "Enable DHT for global peer discovery")
+	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
 
 	log.Printf("🚀 Starting acorde daemon [%s]...", *name)
@@ -197,7 +211,7 @@ func cmdDaemon(args []string) {
 	if *port > 0 {
 		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
 	}
-	syncCfg.Logger = stdLogger{}
+	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 	syncCfg.EnableDHT = *enableDHT
 
 	// Load or generate identity key
@@ -238,7 +252,7 @@ func cmdDaemon(args []string) {
 
 	// Start API server if requested
 	if *apiPort > 0 {
-		apiServer := api.New(e)
+		apiServer := api.New(e, func() int { return len(svc.Peers()) })
 		go func() {
 			log.Printf("🚀 Starting API server on http://localhost:%d", *apiPort)
 			if err := apiServer.ListenAndServe(fmt.Sprintf(":%d", *apiPort)); err != nil {
@@ -386,6 +400,7 @@ func cmdInvite(args []string) {
 	dataDir := fs.String("data", "", "Data directory")
 	expiry := fs.Duration("expiry", 24*time.Hour, "Invite expiry duration")
 	port := fs.Int("port", 0, "Port to listen/advertise (0 = random)")
+	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
 
 	cfg := engine.Config{DataDir: *dataDir}
@@ -401,6 +416,7 @@ func cmdInvite(args []string) {
 		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
 	}
 	syncCfg.EnableMDNS = false
+	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 
 	// Load identity key (must match daemon if running)
 	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
@@ -462,8 +478,10 @@ func cmdPair(args []string) {
 	}
 	inviteCode := args[0]
 	
+	
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	dataDir := fs.String("data", "", "Data directory")
+	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args[1:])
 
 	// Load allowlist/engine
@@ -479,6 +497,7 @@ func cmdPair(args []string) {
 	if *dataDir != "" {
 		syncCfg.AllowlistPath = *dataDir // Use data dir name for peer file location
 	}
+	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 	
 	// Load identity key to ensure we match the daemon's ID
 	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
@@ -761,7 +780,7 @@ func cmdServe(args []string) {
 	defer e.Close()
 
 	// Import api package
-	apiServer := api.New(e)
+	apiServer := api.New(e, nil)
 
 	fmt.Printf("🚀 Starting API server on http://localhost:%s\n", port)
 	fmt.Printf("   GET    /entries\n")
