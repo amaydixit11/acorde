@@ -43,20 +43,36 @@ go build -o acorde .
 
 ### "invalid reference to net.zoneCache" Error
 
-If you see this error during build (common on Go 1.23+ which Termux uses), you need to patch a dependency.
+This error happens because the installed Go version (likely 1.23+) is too new for the networking library used (`anet`). The most reliable fix in Termux is to manually patch the library file.
 
-Run this command inside the `acorde` directory before building:
+1.  **Make the file writable**:
+    ```bash
+    chmod +w ~/go/pkg/mod/github.com/wlynxg/anet@v0.0.5/interface_android.go
+    ```
 
-```bash
-# Replace the broken library with a patched version
-go mod edit -replace github.com/wlynxg/anet=github.com/stn1slv/anet@v0.0.3
-go mod tidy
-```
+2.  **Edit the file**:
+    ```bash
+    nano ~/go/pkg/mod/github.com/wlynxg/anet@v0.0.5/interface_android.go
+    ```
 
-Then try building again:
-```bash
-go build -o acorde ./cmd/acorde
-```
+3.  **Find and Comment Out Code**:
+    Find the lines referencing `zoneCache` (usually `//go:linkname` and the `var zoneCache` line).
+    **Comment them out** (add `//` at the start of the line).
+
+    Also find the function that uses `zoneCache`. It usually looks like:
+    ```go
+    func (i *Interface) linkLocal() ... {
+        // ... code using zoneCache ...
+    }
+    ```
+    Change the function body to just return `nil` or an empty result if possible, or comment out the `zoneCache` logic inside it. 
+    
+    *Note: This disables some Android-specific network optimizations but allows the app to compile and run.*
+
+4.  **Rebuild**:
+    ```bash
+    go build -o acorde ./cmd/acorde
+    ```
 
 ## Running the Daemon
 
