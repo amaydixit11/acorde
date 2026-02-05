@@ -12,15 +12,17 @@ import (
 
 // Server is the HTTP API server
 type Server struct {
-	engine engine.Engine
-	mux    *http.ServeMux
+	engine    engine.Engine
+	mux       *http.ServeMux
+	peerCount func() int
 }
 
 // New creates a new API server
-func New(e engine.Engine) *Server {
+func New(e engine.Engine, peerCount func() int) *Server {
 	s := &Server{
-		engine: e,
-		mux:    http.NewServeMux(),
+		engine:    e,
+		mux:       http.NewServeMux(),
+		peerCount: peerCount,
 	}
 	s.setupRoutes()
 	return s
@@ -196,6 +198,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
 		"status":      "ok",
 		"entry_count": len(entries),
+	}
+
+	if s.peerCount != nil {
+		status["peer_count"] = s.peerCount()
 	}
 
 	respondJSON(w, http.StatusOK, status)
