@@ -36,6 +36,7 @@ type AddEntryInput struct {
 	Type    EntryType
 	Content []byte
 	Tags    []string
+	Public  bool
 }
 
 // UpdateEntryInput contains parameters for updating an entry
@@ -253,9 +254,9 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 
 	// Set default ACL (Private, Owned by creator)
 	defaultACL := core.ACL{
-		EntryID: result2.ID,
-		Owner:   e.localID,
-		Public:  false,
+		EntryID:   result2.ID,
+		Owner:     e.localID,
+		Public:    input.Public,
 		Timestamp: result2.CreatedAt,
 	}
 	e.acls.SetACL(defaultACL)

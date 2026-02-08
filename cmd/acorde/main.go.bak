@@ -136,40 +136,18 @@ func runWithEngine(cmd string, args []string) {
 	}
 	defer e.Close()
 
-	// 3. Filter global flags from args before passing to subcommands
-	subArgs := filterGlobalFlags(args)
-
 	switch cmd {
 	case "add":
-		cmdAdd(e, subArgs)
+		cmdAdd(e, args)
 	case "get":
-		cmdGet(e, subArgs)
+		cmdGet(e, args)
 	case "list":
-		cmdList(e, subArgs)
+		cmdList(e, args)
 	case "update":
-		cmdUpdate(e, subArgs)
+		cmdUpdate(e, args)
 	case "delete":
-		cmdDelete(e, subArgs)
+		cmdDelete(e, args)
 	}
-}
-
-// filterGlobalFlags removes global flags (like --data) and their values from args
-func filterGlobalFlags(args []string) []string {
-	var filtered []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--data" {
-			// Skip flag and its value
-			i++ 
-			continue
-		}
-		if strings.HasPrefix(arg, "--data=") {
-			// Skip flag with value attached
-			continue
-		}
-		filtered = append(filtered, arg)
-	}
-	return filtered
 }
 
 // syncableEngine wraps pkg/engine.Engine to implement sync.Syncable
@@ -301,7 +279,6 @@ func cmdAdd(e engine.Engine, args []string) {
 	typeStr := fs.String("type", "note", "Entry type")
 	content := fs.String("content", "", "Entry content")
 	tagsStr := fs.String("tags", "", "Comma-separated tags")
-	public := fs.Bool("public", false, "Make entry public (readable by everyone)")
 	fs.Parse(args)
 
 	var tags []string
@@ -317,7 +294,6 @@ func cmdAdd(e engine.Engine, args []string) {
 		Type:    entryType,
 		Content: []byte(*content),
 		Tags:    tags,
-		Public:  *public,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -331,11 +307,7 @@ func cmdGet(e engine.Engine, args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: acorde get <uuid>")
 		os.Exit(1)
 	}
-	id, err := uuid.Parse(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid UUID %q\n", args[0])
-		os.Exit(1)
-	}
+	id, _ := uuid.Parse(args[0])
 	entry, err := e.GetEntry(id)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -370,7 +342,7 @@ func cmdList(e engine.Engine, args []string) {
 		return
 	}
 	for _, entry := range entries {
-		fmt.Printf("%s [%s] %s\n", entry.ID.String(), entry.Type, string(entry.Content)[:min(40, len(entry.Content))])
+		fmt.Printf("%s [%s] %s\n", entry.ID.String()[:8], entry.Type, string(entry.Content)[:min(40, len(entry.Content))])
 	}
 }
 
@@ -379,11 +351,7 @@ func cmdUpdate(e engine.Engine, args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: acorde update <uuid> --content <new>")
 		os.Exit(1)
 	}
-	id, err := uuid.Parse(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid UUID %q\n", args[0])
-		os.Exit(1)
-	}
+	id, _ := uuid.Parse(args[0])
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	content := fs.String("content", "", "New content")
 	fs.Parse(args[1:])
@@ -405,11 +373,7 @@ func cmdDelete(e engine.Engine, args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: acorde delete <uuid>")
 		os.Exit(1)
 	}
-	id, err := uuid.Parse(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid UUID %q\n", args[0])
-		os.Exit(1)
-	}
+	id, _ := uuid.Parse(args[0])
 	if err := e.DeleteEntry(id); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -510,18 +474,18 @@ func cmdInvite(args []string) {
 }
 
 func cmdPair(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: acorde pair <invite-code> [options]\n")
+		os.Exit(1)
+	}
+	inviteCode := args[0]
+	
+	
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	dataDir := fs.String("data", "", "Data directory")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
-	fs.Parse(args)
+	fs.Parse(args[1:])
 
-	if fs.NArg() < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: acorde pair [options] <invite-code>\n")
-		// Also support <invite-code> [options] if passed that way, though standard flag requires options first
-		os.Exit(1)
-	}
-	inviteCode := fs.Arg(0)
-	
 	// Load allowlist/engine
 	cfg := engine.Config{DataDir: *dataDir}
 	e, err := engine.New(cfg)

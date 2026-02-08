@@ -62,10 +62,12 @@ type Entry struct {
 }
 
 // AddEntryInput contains parameters for adding a new entry
+// AddEntryInput contains parameters for adding a new entry
 type AddEntryInput struct {
 	Type    EntryType
 	Content []byte
 	Tags    []string
+	Public  bool
 }
 
 // UpdateEntryInput contains parameters for updating an entry.
@@ -146,6 +148,7 @@ func (w *engineWrapper) AddEntry(input AddEntryInput) (Entry, error) {
 		Type:    toInternalEntryType(input.Type),
 		Content: input.Content,
 		Tags:    input.Tags,
+		Public:  input.Public,
 	})
 	if err != nil {
 		return Entry{}, err
