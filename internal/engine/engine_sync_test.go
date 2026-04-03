@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/amaydixit11/acorde/internal/core"
@@ -215,5 +216,76 @@ func TestApplySyncStateRejectsUnauthorizedRemoteUpdate(t *testing.T) {
 	}
 	if string(result.Content) != "owner data" {
 		t.Fatalf("expected unauthorized sync update to be rejected, got %q", string(result.Content))
+	}
+}
+
+func TestAuthorizedExternalWriterSyncsBackToOwner(t *testing.T) {
+	dirA, err := os.MkdirTemp("", "acorde-sync-a-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir for A: %v", err)
+	}
+	defer os.RemoveAll(dirA)
+
+	dirB, err := os.MkdirTemp("", "acorde-sync-b-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir for B: %v", err)
+	}
+	defer os.RemoveAll(dirB)
+
+	aDaemon := newPersistentTestEngine(t, dirA).(*engineImpl)
+	defer aDaemon.Close()
+	bDaemon := newPersistentTestEngine(t, dirB).(*engineImpl)
+	defer bDaemon.Close()
+
+	entry, err := aDaemon.AddEntry(AddEntryInput{
+		Type:    core.Note,
+		Content: []byte("hello from A"),
+	})
+	if err != nil {
+		t.Fatalf("failed to add entry on A: %v", err)
+	}
+
+	payload, err := aDaemon.GetSyncPayload()
+	if err != nil {
+		t.Fatalf("failed to get initial sync payload: %v", err)
+	}
+	if err := bDaemon.ApplyRemotePayloadFromPeer(payload, aDaemon.localID); err != nil {
+		t.Fatalf("failed to sync A to B: %v", err)
+	}
+
+	if err := aDaemon.GrantWrite(entry.ID, bDaemon.localID); err != nil {
+		t.Fatalf("failed to authorize B on A: %v", err)
+	}
+
+	aclPayload, err := aDaemon.GetSyncPayload()
+	if err != nil {
+		t.Fatalf("failed to get ACL sync payload: %v", err)
+	}
+	if err := bDaemon.ApplyRemotePayloadFromPeer(aclPayload, aDaemon.localID); err != nil {
+		t.Fatalf("failed to sync ACL to B: %v", err)
+	}
+
+	bCLI := newPersistentTestEngine(t, dirB).(*engineImpl)
+	defer bCLI.Close()
+
+	updated := []byte("updated from B")
+	if err := bCLI.UpdateEntry(entry.ID, UpdateEntryInput{Content: &updated}); err != nil {
+		t.Fatalf("failed to update entry from external writer: %v", err)
+	}
+
+	backPayload, err := bDaemon.GetSyncPayload()
+	if err != nil {
+		t.Fatalf("failed to get sync payload from B daemon: %v", err)
+	}
+	if err := aDaemon.ApplyRemotePayloadFromPeer(backPayload, bDaemon.localID); err != nil {
+		t.Fatalf("failed to apply B payload on A: %v", err)
+	}
+
+	result, err := aDaemon.GetEntry(entry.ID)
+	if err != nil {
+		t.Fatalf("failed to get entry on A: %v", err)
+	}
+	if string(result.Content) != "updated from B" {
+		t.Fatalf("expected A to converge to writer update, got %q", string(result.Content))
 	}
 }
