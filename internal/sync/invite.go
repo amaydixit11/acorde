@@ -87,6 +87,32 @@ func CreateInvite(h host.Host, expiry time.Duration) (*PeerInvite, error) {
 	return invite, nil
 }
 
+// CreateInviteForIdentity generates a signed invite for a known peer identity and addresses.
+func CreateInviteForIdentity(peerID peer.ID, privKey crypto.PrivKey, addresses []string, expiry time.Duration) (*PeerInvite, error) {
+	now := time.Now()
+
+	pubKey := privKey.GetPublic()
+	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	invite := &PeerInvite{
+		PeerID:    peerID.String(),
+		Addresses: addresses,
+		PublicKey: pubKeyBytes,
+		CreatedAt: now.Unix(),
+		ExpiresAt: now.Add(expiry).Unix(),
+	}
+
+	sig, err := privKey.Sign(invite.signableData())
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign invite: %w", err)
+	}
+	invite.Signature = sig
+	return invite, nil
+}
+
 // signableData returns the data that gets signed
 func (i *PeerInvite) signableData() []byte {
 	data := fmt.Sprintf("%s|%s|%d|%d",

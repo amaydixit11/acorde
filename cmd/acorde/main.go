@@ -8,10 +8,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
-	"path/filepath"
 
 	"golang.org/x/term"
 
@@ -21,10 +21,16 @@ import (
 	"github.com/amaydixit11/acorde/pkg/crypto"
 	"github.com/amaydixit11/acorde/pkg/engine"
 	"github.com/google/uuid"
-	
+
 	p2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 )
+
+type daemonPeerInfo struct {
+	PeerID string   `json:"peer_id"`
+	Addrs  []string `json:"addrs"`
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -50,7 +56,7 @@ func main() {
 		cmdExport(args)
 	case "serve":
 		cmdServe(args)
-	case "add", "get", "list", "update", "delete":
+	case "add", "get", "list", "update", "delete", "authorize":
 		runWithEngine(cmd, args)
 	case "help":
 		printUsage()
@@ -67,16 +73,17 @@ func printUsage() {
 Usage: acorde <command> [options]
 
 Commands:
-  daemon   Start sync daemon (auto-discovers peers on LAN)
-  serve    Start REST API server (--port 7331)
-  status   Show vault status (entry count, sync state)
-  export   Export all entries to JSON
-  add      Add a new entry
-  get      Get an entry by ID  
-  list     List entries
-  update   Update an entry
-  delete   Delete an entry
-  help     Show this help
+  daemon      Start sync daemon (auto-discovers peers on LAN)
+  serve       Start REST API server (--port 7331)
+  status      Show vault status (entry count, sync state)
+  export      Export all entries to JSON
+  add         Add a new entry
+  get         Get an entry by ID  
+  list        List entries
+  update      Update an entry
+  delete      Delete an entry
+  authorize   Grant write access to a peer
+  help        Show this help
 
 Encryption:
   acorde init   Initialize new encrypted vault
@@ -90,21 +97,22 @@ Entry Commands:
   acorde list --type note
   acorde get <uuid>
   acorde update <uuid> --content "Updated"
-  acorde delete <uuid>`)
+  acorde delete <uuid>
+  acorde authorize <uuid> <peer-id>`)
 }
 
 func runWithEngine(cmd string, args []string) {
 	// 1. Determine data dir
-	// We need to parse args manually or peek at them because flag.Parse consumes them
-	// For simplicity, we assume default data dir if not specified, 
-	// OR we enforce standard flag usage. Let's stick to default.
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".acorde") 
-	
-	// Check for custom data dir in args (simple check)
+	dataDir := resolveDataDir("")
+
+	// Check for custom data dir in args.
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
-			dataDir = args[i+1]
+			dataDir = resolveDataDir(args[i+1])
+			break
+		}
+		if strings.HasPrefix(arg, "--data=") {
+			dataDir = resolveDataDir(strings.TrimPrefix(arg, "--data="))
 			break
 		}
 	}
@@ -126,7 +134,7 @@ func runWithEngine(cmd string, args []string) {
 			os.Exit(1)
 		}
 		cfg.EncryptionKey = &key
-		fmt.Println("") 
+		fmt.Println("")
 	}
 
 	e, err := engine.New(cfg)
@@ -150,7 +158,30 @@ func runWithEngine(cmd string, args []string) {
 		cmdUpdate(e, subArgs)
 	case "delete":
 		cmdDelete(e, subArgs)
+	case "authorize":
+		cmdAuthorize(e, subArgs)
 	}
+}
+
+func cmdAuthorize(e engine.Engine, args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: acorde authorize <uuid> <peer-id>")
+		os.Exit(1)
+	}
+
+	id, err := uuid.Parse(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid UUID %q\n", args[0])
+		os.Exit(1)
+	}
+
+	peerID := args[1]
+	if err := e.GrantWrite(id, peerID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Authorized peer %s to write entry %s\n", peerID, id)
 }
 
 // filterGlobalFlags removes global flags (like --data) and their values from args
@@ -160,7 +191,7 @@ func filterGlobalFlags(args []string) []string {
 		arg := args[i]
 		if arg == "--data" {
 			// Skip flag and its value
-			i++ 
+			i++
 			continue
 		}
 		if strings.HasPrefix(arg, "--data=") {
@@ -184,13 +215,13 @@ func (s *syncableEngine) GetSyncState() crdt.ReplicaState {
 	return state
 }
 
-func (s *syncableEngine) ApplySyncState(state crdt.ReplicaState) error {
+func (s *syncableEngine) ApplySyncState(state crdt.ReplicaState, senderPeerID string) error {
 	payload, _ := json.Marshal(state)
-	return s.ApplyRemotePayload(payload)
+	return s.Engine.ApplyRemotePayloadFromPeer(payload, senderPeerID)
 }
 
 type sysLogger struct {
-	label string
+	label   string
 	verbose bool
 }
 
@@ -218,8 +249,16 @@ func cmdDaemon(args []string) {
 	enableMDNS := fs.Bool("mdns", true, "Enable mDNS for local discovery")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
+	*dataDir = resolveDataDir(*dataDir)
 
 	log.Printf("🚀 Starting acorde daemon [%s]...", *name)
+
+	// Load or generate identity key BEFORE creating engine
+	// This ensures node_id file exists and contains the P2P PeerID
+	privKey, _, err := loadOrGenerateKey(*dataDir)
+	if err != nil {
+		log.Fatalf("Failed to load identity key: %v", err)
+	}
 
 	// Create engine
 	cfg := engine.Config{DataDir: *dataDir}
@@ -237,13 +276,8 @@ func cmdDaemon(args []string) {
 	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 	syncCfg.EnableDHT = *enableDHT
 	syncCfg.EnableMDNS = *enableMDNS
-
-	// Load or generate identity key
-	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
-	if err != nil {
-		log.Fatalf("Failed to load identity key: %v", err)
-	}
 	syncCfg.PrivateKey = privKey
+	syncCfg.AllowlistPath = *dataDir
 
 	adapter := sync.NewEngineAdapter(&syncableEngine{e})
 	svc, err := sync.NewP2PService(adapter, syncCfg)
@@ -255,6 +289,9 @@ func cmdDaemon(args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := svc.Start(ctx); err != nil {
 		log.Fatalf("Failed to start sync: %v", err)
+	}
+	if err := persistDaemonPeerInfo(*dataDir, svc.GetHost().ID().String(), svc.GetHost().Addrs()); err != nil {
+		log.Printf("Warning: failed to persist daemon addresses: %v", err)
 	}
 
 	log.Printf("✅ Daemon started! Discovering peers on LAN...")
@@ -429,7 +466,9 @@ func printEntry(entry engine.Entry) {
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
 
@@ -440,41 +479,49 @@ func cmdInvite(args []string) {
 	port := fs.Int("port", 0, "Port to listen/advertise (0 = random)")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
+	*dataDir = resolveDataDir(*dataDir)
 
 	cfg := engine.Config{DataDir: *dataDir}
-	e, err := engine.New(cfg)
-	if err != nil {
-		log.Fatalf("Error: %v", err)
-	}
-	defer e.Close()
-
-	// Create sync service just for the host
-	syncCfg := sync.DefaultConfig()
-	if *port > 0 {
-		syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
-	}
-	syncCfg.EnableMDNS = false
-	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
 
 	// Load identity key (must match daemon if running)
-	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
+	privKey, peerID, err := loadOrGenerateKey(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("Failed to load identity key: %v", err)
 	}
-	syncCfg.PrivateKey = privKey
 
-	provider := sync.NewEngineAdapter(&syncableEngine{e})
-	svc, err := sync.NewP2PService(provider, syncCfg)
-	if err != nil {
-		log.Fatalf("Failed to create service: %v", err)
-	}
-	defer svc.Stop()
+	var invite *sync.PeerInvite
+	if info, err := loadDaemonPeerInfo(*dataDir); err == nil && info.PeerID == peerID.String() && len(info.Addrs) > 0 {
+		invite, err = sync.CreateInviteForIdentity(peerID, privKey, info.Addrs, *expiry)
+		if err != nil {
+			log.Fatalf("Failed to create invite from daemon addresses: %v", err)
+		}
+	} else {
+		e, err := engine.New(cfg)
+		if err != nil {
+			log.Fatalf("Error: %v", err)
+		}
+		defer e.Close()
 
-	// Get the host from the service
-	// Use interface method
-	invite, err := sync.CreateInvite(svc.GetHost(), *expiry)
-	if err != nil {
-		log.Fatalf("Failed to create invite: %v", err)
+		// Create sync service just for the host
+		syncCfg := sync.DefaultConfig()
+		if *port > 0 {
+			syncCfg.ListenAddrs = []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", *port)}
+		}
+		syncCfg.EnableMDNS = false
+		syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
+		syncCfg.PrivateKey = privKey
+
+		provider := sync.NewEngineAdapter(&syncableEngine{e})
+		svc, err := sync.NewP2PService(provider, syncCfg)
+		if err != nil {
+			log.Fatalf("Failed to create service: %v", err)
+		}
+		defer svc.Stop()
+
+		invite, err = sync.CreateInvite(svc.GetHost(), *expiry)
+		if err != nil {
+			log.Fatalf("Failed to create invite: %v", err)
+		}
 	}
 
 	// If encrypted, include key
@@ -486,7 +533,7 @@ func cmdInvite(args []string) {
 			log.Fatalf("\nError: %v", err)
 		}
 		fmt.Println("")
-		
+
 		key, err := store.Unlock(password)
 		if err != nil {
 			log.Fatalf("Failed to unlock: %v", err)
@@ -514,6 +561,7 @@ func cmdPair(args []string) {
 	dataDir := fs.String("data", "", "Data directory")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fs.Parse(args)
+	*dataDir = resolveDataDir(*dataDir)
 
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: acorde pair [options] <invite-code>\n")
@@ -521,7 +569,7 @@ func cmdPair(args []string) {
 		os.Exit(1)
 	}
 	inviteCode := fs.Arg(0)
-	
+
 	// Load allowlist/engine
 	cfg := engine.Config{DataDir: *dataDir}
 	e, err := engine.New(cfg)
@@ -536,7 +584,7 @@ func cmdPair(args []string) {
 		syncCfg.AllowlistPath = *dataDir // Use data dir name for peer file location
 	}
 	syncCfg.Logger = &sysLogger{label: "sync", verbose: *verbose}
-	
+
 	// Load identity key to ensure we match the daemon's ID
 	privKey, _, err := loadOrGenerateKey(cfg.DataDir)
 	if err != nil {
@@ -550,7 +598,7 @@ func cmdPair(args []string) {
 		log.Fatalf("Failed to create service: %v", err)
 	}
 	defer svc.Stop()
-	
+
 	// Start service to allow connection
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -579,17 +627,17 @@ func cmdPair(args []string) {
 				log.Fatalf("\nError: %v", err)
 			}
 			fmt.Println("")
-			
+
 			if string(pass1) != string(pass2) {
 				log.Fatalf("Passwords do not match")
 			}
-			
+
 			var key crypto.Key
 			if len(invite.Key) != crypto.KeySize {
 				log.Fatalf("Invalid key size in invite")
 			}
 			copy(key[:], invite.Key)
-			
+
 			if err := store.InitializeWithKey(pass1, key); err != nil {
 				log.Fatalf("Failed to initialize vault with key: %v", err)
 			}
@@ -598,9 +646,14 @@ func cmdPair(args []string) {
 	}
 
 	fmt.Printf("Connecting to peer %s...\n", invite.PeerID)
-	
+
 	// Connect
 	if err := svc.ConnectPeer(invite); err != nil {
+		if strings.Contains(err.Error(), "failed to connect to peer") {
+			fmt.Printf("⚠️  Peer saved locally, but immediate connection failed: %v\n", err)
+			fmt.Printf("Peer added to allowlist. Start daemon to begin syncing.\n")
+			return
+		}
 		log.Fatalf("Failed to pair: %v", err)
 	}
 
@@ -614,13 +667,7 @@ func cmdInit(args []string) {
 	fs.Parse(args)
 
 	dir := *dataDir
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatalf("Failed to get user home directory: %v", err)
-		}
-		dir = filepath.Join(home, ".acorde")
-	}
+	dir = resolveDataDir(dir)
 
 	store := crypto.NewFileKeyStore(dir)
 	if store.IsInitialized() {
@@ -665,18 +712,17 @@ func readPassword() ([]byte, error) {
 }
 
 func cmdStatus(args []string) {
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".acorde")
+	dataDir := resolveDataDir("")
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
-			dataDir = args[i+1]
+			dataDir = resolveDataDir(args[i+1])
 			break
 		}
 	}
 
 	cfg := engine.Config{DataDir: dataDir}
-	
+
 	// Try to unlock if encrypted
 	store := crypto.NewFileKeyStore(dataDir)
 	if store.IsInitialized() {
@@ -704,19 +750,19 @@ func cmdStatus(args []string) {
 
 	fmt.Println("📊 Vault Status")
 	fmt.Println("───────────────")
-	fmt.Printf("  Data Dir:    %s\n", dataDir)
-	fmt.Printf("  Encrypted:   %v\n", store.IsInitialized())
-	fmt.Printf("  Entries:     %d\n", len(entries))
+	fmt.Printf("  Local Peer ID: %s\n", e.PeerID())
+	fmt.Printf("  Data Dir:      %s\n", dataDir)
+	fmt.Printf("  Encrypted:     %v\n", store.IsInitialized())
+	fmt.Printf("  Entries:       %d\n", len(entries))
 }
 
 func cmdExport(args []string) {
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".acorde")
+	dataDir := resolveDataDir("")
 	outputFile := "acorde-export.json"
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
-			dataDir = args[i+1]
+			dataDir = resolveDataDir(args[i+1])
 		}
 		if arg == "--file" && i+1 < len(args) {
 			outputFile = args[i+1]
@@ -724,7 +770,7 @@ func cmdExport(args []string) {
 	}
 
 	cfg := engine.Config{DataDir: dataDir}
-	
+
 	store := crypto.NewFileKeyStore(dataDir)
 	if store.IsInitialized() {
 		fmt.Print("🔒 Vault is encrypted. Enter password: ")
@@ -780,13 +826,12 @@ func cmdExport(args []string) {
 }
 
 func cmdServe(args []string) {
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".acorde")
+	dataDir := resolveDataDir("")
 	port := "7331"
 
 	for i, arg := range args {
 		if arg == "--data" && i+1 < len(args) {
-			dataDir = args[i+1]
+			dataDir = resolveDataDir(args[i+1])
 		}
 		if arg == "--port" && i+1 < len(args) {
 			port = args[i+1]
@@ -794,7 +839,7 @@ func cmdServe(args []string) {
 	}
 
 	cfg := engine.Config{DataDir: dataDir}
-	
+
 	store := crypto.NewFileKeyStore(dataDir)
 	if store.IsInitialized() {
 		fmt.Print("🔒 Vault is encrypted. Enter password: ")
@@ -837,6 +882,7 @@ func cmdServe(args []string) {
 // loadOrGenerateKey loads the private key from disk or generates a new one.
 // It also ensures node_id file matches the key.
 func loadOrGenerateKey(dataDir string) (p2pcrypto.PrivKey, peer.ID, error) {
+	dataDir = resolveDataDir(dataDir)
 	keyPath := filepath.Join(dataDir, "node_key")
 	nodeIDPath := filepath.Join(dataDir, "node_id")
 
@@ -846,11 +892,14 @@ func loadOrGenerateKey(dataDir string) (p2pcrypto.PrivKey, peer.ID, error) {
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to unmarshal key: %w", err)
 		}
-		
+
 		id, err := peer.IDFromPrivateKey(privKey)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to derive peer ID: %w", err)
 		}
+
+		// Ensure node_id file exists and matches key
+		os.WriteFile(nodeIDPath, []byte(id.String()), 0644)
 		return privKey, id, nil
 	}
 
@@ -888,3 +937,46 @@ func loadOrGenerateKey(dataDir string) (p2pcrypto.PrivKey, peer.ID, error) {
 	return privKey, id, nil
 }
 
+func resolveDataDir(dataDir string) string {
+	if dataDir != "" {
+		return dataDir
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".acorde"
+	}
+
+	return filepath.Join(home, ".acorde")
+}
+
+func daemonPeerInfoPath(dataDir string) string {
+	return filepath.Join(resolveDataDir(dataDir), "peer_addrs.json")
+}
+
+func persistDaemonPeerInfo(dataDir string, peerID string, addrs []multiaddr.Multiaddr) error {
+	info := daemonPeerInfo{
+		PeerID: peerID,
+		Addrs:  make([]string, 0, len(addrs)),
+	}
+	for _, addr := range addrs {
+		info.Addrs = append(info.Addrs, addr.String())
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(daemonPeerInfoPath(dataDir), data, 0644)
+}
+
+func loadDaemonPeerInfo(dataDir string) (*daemonPeerInfo, error) {
+	data, err := os.ReadFile(daemonPeerInfoPath(dataDir))
+	if err != nil {
+		return nil, err
+	}
+	var info daemonPeerInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}

@@ -7,14 +7,23 @@ import (
 	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/amaydixit11/acorde/internal/crdt"
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
 )
+
+func newInviteHost(t *testing.T) host.Host {
+	t.Helper()
+
+	h, err := libp2p.New()
+	if err != nil {
+		t.Skipf("skipping invite test in restricted environment: %v", err)
+	}
+	return h
+}
 
 func TestCreateAndParseInvite(t *testing.T) {
 	// Create a libp2p host
-	h, err := libp2p.New()
-	if err != nil {
-		t.Fatalf("failed to create host: %v", err)
-	}
+	h := newInviteHost(t)
+	var err error
 	defer h.Close()
 
 	// Create invite
@@ -51,24 +60,30 @@ func TestCreateAndParseInvite(t *testing.T) {
 }
 
 func TestExpiredInvite(t *testing.T) {
-	h, _ := libp2p.New()
+	h := newInviteHost(t)
 	defer h.Close()
 
 	// Create invite that expires immediately
-	invite, _ := CreateInvite(h, -1*time.Second)
-	
+	invite, err := CreateInvite(h, -1*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create invite: %v", err)
+	}
+
 	code, _ := invite.Encode()
-	_, err := ParseInvite(code)
+	_, err = ParseInvite(code)
 	if err == nil {
 		t.Error("should reject expired invite")
 	}
 }
 
 func TestInviteQRGeneration(t *testing.T) {
-	h, _ := libp2p.New()
+	h := newInviteHost(t)
 	defer h.Close()
 
-	invite, _ := CreateInvite(h, 24*time.Hour)
+	invite, err := CreateInvite(h, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("failed to create invite: %v", err)
+	}
 
 	// Generate QR PNG
 	png, err := invite.ToQR()
@@ -104,7 +119,7 @@ func (p *inviteTestProvider) GetState() crdt.ReplicaState {
 	return p.replica.State()
 }
 
-func (p *inviteTestProvider) ApplyState(state crdt.ReplicaState) error {
+func (p *inviteTestProvider) ApplyState(state crdt.ReplicaState, senderPeerID string) error {
 	return nil
 }
 
