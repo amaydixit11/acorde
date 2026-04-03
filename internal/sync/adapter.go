@@ -14,7 +14,7 @@ type Syncable interface {
 	GetSyncState() crdt.ReplicaState
 
 	// ApplySyncState applies remote CRDT state and merges
-	ApplySyncState(state crdt.ReplicaState) error
+	ApplySyncState(state crdt.ReplicaState, senderPeerID string) error
 }
 
 // EngineAdapter adapts a Syncable engine for the sync service
@@ -33,8 +33,8 @@ func (a *EngineAdapter) GetState() crdt.ReplicaState {
 }
 
 // ApplyState merges remote state into local
-func (a *EngineAdapter) ApplyState(state crdt.ReplicaState) error {
-	return a.engine.ApplySyncState(state)
+func (a *EngineAdapter) ApplyState(state crdt.ReplicaState, senderPeerID string) error {
+	return a.engine.ApplySyncState(state, senderPeerID)
 }
 
 // StateHash returns a hash of current state for quick comparison

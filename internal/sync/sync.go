@@ -110,7 +110,7 @@ type StateProvider interface {
 	GetState() crdt.ReplicaState
 
 	// ApplyState merges remote state into local
-	ApplyState(state crdt.ReplicaState) error
+	ApplyState(state crdt.ReplicaState, senderPeerID string) error
 
 	// StateHash returns a hash of current state for quick comparison
 	StateHash() []byte

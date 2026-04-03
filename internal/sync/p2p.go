@@ -49,8 +49,9 @@ type p2pService struct {
 }
 
 type noopLogger struct{}
+
 func (noopLogger) Debugf(format string, v ...interface{}) {}
-func (noopLogger) Infof(format string, v ...interface{}) {}
+func (noopLogger) Infof(format string, v ...interface{})  {}
 func (noopLogger) Errorf(format string, v ...interface{}) {}
 
 // NewP2PService creates a new libp2p-based sync service
@@ -82,7 +83,6 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 	if logger == nil {
 		logger = noopLogger{}
 	}
-
 
 	var allowlist *Allowlist
 	if cfg.AllowlistPath != "" {
@@ -123,9 +123,9 @@ func (s *p2pService) Start(ctx context.Context) error {
 		// No, service *type* (Tag) is constant. Service *instance* name should be unique.
 		// mdns.NewMdnsService uses ServiceName as the Service Tag "_acorde-discovery._udp".
 		// It manages instance names automatically (usually hostname).
-		// If we run multiple instances on same host, they might conflict if they try to bind same port? 
+		// If we run multiple instances on same host, they might conflict if they try to bind same port?
 		// SyncService binds to 0 (random port) by default in config, so ports are fine.
-		// mdns.NewMdnsService implementation handles conflicts by appending suffixes? 
+		// mdns.NewMdnsService implementation handles conflicts by appending suffixes?
 		// Let's leave it for now unless we are sure.
 		mdnsService := mdns.NewMdnsService(s.host, ServiceName, s)
 		if err := mdnsService.Start(); err != nil {
@@ -154,6 +154,9 @@ func (s *p2pService) Start(ctx context.Context) error {
 	// Start periodic sync
 	s.wg.Add(1)
 	go s.syncLoop()
+
+	// Proactively connect to peers saved from the pairing flow.
+	go s.connectAllowlistedPeers()
 
 	s.logger.Infof("sync service started, listening on %v", s.host.Addrs())
 	return nil
@@ -253,6 +256,56 @@ func (s *p2pService) checkAllowlist(p peer.ID) bool {
 	return s.allowlist.IsAllowed(p)
 }
 
+func (s *p2pService) connectAllowlistedPeers() {
+	if s.allowlist == nil || s.ctx == nil {
+		return
+	}
+
+	for _, allowed := range s.allowlist.List() {
+		peerID, err := peer.Decode(allowed.PeerID)
+		if err != nil || peerID == s.host.ID() {
+			continue
+		}
+
+		s.peersMu.RLock()
+		_, connected := s.peers[peerID]
+		s.peersMu.RUnlock()
+		if connected {
+			continue
+		}
+
+		var addrs []multiaddr.Multiaddr
+		for _, addrStr := range allowed.Addresses {
+			ma, err := multiaddr.NewMultiaddr(addrStr)
+			if err != nil {
+				continue
+			}
+			addrs = append(addrs, ma)
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		err = s.host.Connect(ctx, peer.AddrInfo{ID: peerID, Addrs: addrs})
+		cancel()
+		if err != nil {
+			s.logger.Debugf("allowlist connect to %s failed: %v", peerID.String()[:8], err)
+			continue
+		}
+
+		s.peersMu.Lock()
+		s.peers[peerID] = struct{}{}
+		s.peersMu.Unlock()
+
+		go func(pid peer.ID) {
+			if err := s.SyncWith(s.ctx, pid); err != nil {
+				s.logger.Errorf("allowlist sync with %s failed: %v", pid.String()[:8], err)
+			}
+		}(peerID)
+	}
+}
+
 // SyncWith triggers a sync with a specific peer
 func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
 	// 1. Enforce timeout to prevent memory leaks in activeSyncs
@@ -284,36 +337,36 @@ func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
 		// A connects to B. B rejects (busy). A fails.
 		// B connects to A. A rejects (busy). B fails.
 		// Result: Livelock.
-		
+
 		// Fix: Don't reject "Active" if we are just marking it?
 		// We need to allow the *incoming* connection even if we are "Active" initiating?
 		// But `activeSyncs` tracks *sessions*.
-		
+
 		// Simpler fix: If active, just return nil (it's happening).
 		// But verify if it's STUCK.
 		// The user suggested: "Use session IDs bidirectionally or allow concurrent syncs".
 		// Or tie-break.
-		
+
 		// Let's rely on the timeout I added earlier to clear stuck syncs.
 		// To fix livelock where they block *each other* continuously:
 		// We should perhaps NOT block outgoing if incoming is happening?
 		// But we want to avoid double processing.
-		
+
 		// Let's implement the Tie-Breaker for *Initiating*.
 		// If we are Lower ID, and we see it's active (maybe incoming?), we back off.
-		// If we are Higher ID, we proceed? 
+		// If we are Higher ID, we proceed?
 		// Actually, if it's active in OUR map, it means WE are processing it.
 		// So returning nil is correct. The problem is if the OTHER side rejects us because THEY are processing.
-		
+
 		// To fix the "Collision" (Head-to-Head):
 		// A dials B. B dials A.
-		// A sees B incoming. 
+		// A sees B incoming.
 		// The activeSyncs check is local.
-		
+
 		// The Livelock happens on the network layer if both sides Reject multiple streams.
 		// My p2p.go doesn't seem to reject incoming streams based on `activeSyncs`.
 		// Let's check `handleStream`.
-		
+
 		s.activeSyncsMu.Unlock()
 		return nil // Already syncing with this peer
 	}
@@ -371,10 +424,36 @@ func (s *p2pService) SyncWith(parentCtx context.Context, peerID peer.ID) error {
 			atomic.AddInt64(&s.syncFailures, 1)
 			return fmt.Errorf("failed to decode state: %w", err)
 		}
-		if err := s.provider.ApplyState(state); err != nil {
+		if err := s.provider.ApplyState(state, peerID.String()); err != nil {
 			atomic.AddInt64(&s.syncFailures, 1)
 			return err
 		}
+
+		// Send our merged state back so the peer also converges when we were the side
+		// that had newer local changes.
+		mergedState := s.provider.GetState()
+		mergedStateData, _ := json.Marshal(mergedState)
+		stateMsg := &Message{
+			Type:      MsgState,
+			SessionID: sessionID,
+			State:     mergedStateData,
+		}
+		if err := writeMessage(stream, stateMsg); err != nil {
+			atomic.AddInt64(&s.syncFailures, 1)
+			return fmt.Errorf("failed to send merged state: %w", err)
+		}
+
+		// Read final acknowledgement from the peer after it applies the merged state.
+		finalResp, err := readMessage(stream)
+		if err != nil {
+			atomic.AddInt64(&s.syncFailures, 1)
+			return fmt.Errorf("failed to read final sync response: %w", err)
+		}
+		if finalResp.Type != MsgStateHash {
+			atomic.AddInt64(&s.syncFailures, 1)
+			return fmt.Errorf("unexpected final sync response type: %d", finalResp.Type)
+		}
+
 		atomic.AddInt64(&s.syncSuccesses, 1)
 		s.logger.Infof("synced with peer %s (received %d bytes)", peerID.String()[:8], len(resp.State))
 		return nil
@@ -456,6 +535,7 @@ func (s *p2pService) handleStream(stream network.Stream) {
 	}
 
 	var resp *Message
+	expectFollowupState := false
 
 	switch msg.Type {
 	case MsgStateHash:
@@ -470,8 +550,8 @@ func (s *p2pService) handleStream(stream network.Stream) {
 				SessionID: msg.SessionID,
 				StateHash: ourHash,
 			}
+		} else {
 			// Hashes differ - send our full state
-			
 			// CRDT merge will combine both states correctly
 			state := s.provider.GetState()
 			stateData, _ := json.Marshal(state)
@@ -480,6 +560,7 @@ func (s *p2pService) handleStream(stream network.Stream) {
 				SessionID: msg.SessionID,
 				State:     stateData,
 			}
+			expectFollowupState = true
 		}
 
 	case MsgStateRequest:
@@ -496,7 +577,7 @@ func (s *p2pService) handleStream(stream network.Stream) {
 		// Apply incoming state
 		var state crdt.ReplicaState
 		if err := json.Unmarshal(msg.State, &state); err == nil {
-			s.provider.ApplyState(state)
+			s.provider.ApplyState(state, stream.Conn().RemotePeer().String())
 		}
 		resp = &Message{
 			Type:      MsgStateHash,
@@ -507,6 +588,30 @@ func (s *p2pService) handleStream(stream network.Stream) {
 
 	if resp != nil {
 		writeMessage(stream, resp)
+	}
+
+	// If we sent our state in response to a hash mismatch, the initiator may send
+	// its merged state back on the same stream so both sides converge.
+	if expectFollowupState {
+		nextMsg, err := readMessage(stream)
+		if err != nil {
+			return
+		}
+		if nextMsg.Type != MsgState {
+			return
+		}
+
+		var state crdt.ReplicaState
+		if err := json.Unmarshal(nextMsg.State, &state); err == nil {
+			s.provider.ApplyState(state, stream.Conn().RemotePeer().String())
+		}
+
+		finalResp := &Message{
+			Type:      MsgStateHash,
+			SessionID: nextMsg.SessionID,
+			StateHash: s.provider.StateHash(),
+		}
+		writeMessage(stream, finalResp)
 	}
 }
 
@@ -536,6 +641,7 @@ func (s *p2pService) syncLoop() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
+			s.connectAllowlistedPeers()
 			for _, peerID := range s.Peers() {
 				peerID := peerID // Capture for goroutine
 				go func() {
