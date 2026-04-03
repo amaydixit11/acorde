@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -67,19 +68,35 @@ func (s *Server) handleEntries(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleEntry handles GET/PUT/DELETE /entries/:id
+// handleEntry handles GET/PUT/DELETE /entries/:id and POST /entries/:id/authorize
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	// Extract ID from path
-	path := strings.TrimPrefix(r.URL.Path, "/entries/")
-	if path == "" {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/entries/"), "/")
+	if len(parts) < 1 || parts[0] == "" {
 		http.Error(w, "Missing entry ID", http.StatusBadRequest)
 		return
 	}
 
-	id, err := uuid.Parse(path)
+	id, err := uuid.Parse(parts[0])
 	if err != nil {
 		http.Error(w, "Invalid entry ID", http.StatusBadRequest)
 		return
+	}
+
+	// Route based on sub-path
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "authorize":
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			s.authorizeEntry(w, r, id)
+			return
+		default:
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	switch r.Method {
@@ -143,7 +160,7 @@ func (s *Server) createEntry(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getEntry(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	entry, err := s.engine.GetEntry(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeEngineError(w, err)
 		return
 	}
 
@@ -171,7 +188,7 @@ func (s *Server) updateEntry(w http.ResponseWriter, r *http.Request, id uuid.UUI
 	}
 
 	if err := s.engine.UpdateEntry(id, input); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeEngineError(w, err)
 		return
 	}
 
@@ -180,7 +197,30 @@ func (s *Server) updateEntry(w http.ResponseWriter, r *http.Request, id uuid.UUI
 
 func (s *Server) deleteEntry(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	if err := s.engine.DeleteEntry(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeEngineError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) authorizeEntry(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
+	var req struct {
+		PeerID string `json:"peer_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.PeerID == "" {
+		http.Error(w, "Missing peer_id", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.engine.GrantWrite(id, req.PeerID); err != nil {
+		writeEngineError(w, err)
 		return
 	}
 
@@ -243,4 +283,20 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+func writeEngineError(w http.ResponseWriter, err error) {
+	var notFound engine.ErrNotFound
+	if errors.As(err, &notFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	var denied engine.ErrAccessDenied
+	if errors.As(err, &denied) {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }

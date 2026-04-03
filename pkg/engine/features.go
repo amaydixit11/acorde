@@ -78,9 +78,6 @@ const (
 	PermAdmin = acl.PermAdmin
 )
 
-// ErrAccessDenied is returned when access is denied
-type ErrAccessDenied = acl.ErrAccessDenied
-
 // ========== Webhooks & Callbacks ==========
 
 // HookManager manages webhooks and callbacks

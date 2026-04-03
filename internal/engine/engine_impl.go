@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/amaydixit11/acorde/internal/acl"
 	"github.com/amaydixit11/acorde/internal/core"
-	"github.com/amaydixit11/acorde/internal/hooks"
 	"github.com/amaydixit11/acorde/internal/crdt"
+	"github.com/amaydixit11/acorde/internal/hooks"
 	"github.com/amaydixit11/acorde/internal/schema"
-	"github.com/amaydixit11/acorde/internal/version"
-	"github.com/amaydixit11/acorde/pkg/crypto"
 	"github.com/amaydixit11/acorde/internal/storage"
 	"github.com/amaydixit11/acorde/internal/storage/sqlite"
+	"github.com/amaydixit11/acorde/internal/version"
+	"github.com/amaydixit11/acorde/pkg/crypto"
 	"github.com/google/uuid"
 )
-
 
 // Config contains configuration options for the engine
 type Config struct {
@@ -65,7 +65,7 @@ type Entry struct {
 	CreatedAt uint64
 	UpdatedAt uint64
 	Deleted   bool
-	Owner     string    // PeerID of creator/owner
+	Owner     string // PeerID of creator/owner
 }
 
 // Engine is the main interface for acorde
@@ -75,6 +75,7 @@ type Engine interface {
 	GetEntry(id uuid.UUID) (Entry, error)
 	UpdateEntry(id uuid.UUID, input UpdateEntryInput) error
 	DeleteEntry(id uuid.UUID) error
+	GrantWrite(id uuid.UUID, peerID string) error
 
 	// Querying
 	ListEntries(filter ListFilter) ([]Entry, error)
@@ -82,17 +83,20 @@ type Engine interface {
 	// Sync hooks (called by transport layer)
 	GetSyncPayload() ([]byte, error)
 	ApplyRemotePayload(payload []byte) error
+	ApplyRemotePayloadFromPeer(payload []byte, senderPeerID string) error
+	ApplySyncState(state crdt.ReplicaState, senderPeerID string) error
 
 	// Events
 	Subscribe() Subscription
 
 	// Features
 	RegisterSchema(entryType string, schemaJSON []byte) error
-	
+
 	// Accessors for new features
 	Versions() *version.Store
 	ACL() *acl.Store
 	Hooks() *hooks.Manager
+	PeerID() string
 
 	// Lifecycle
 	Close() error
@@ -102,6 +106,7 @@ type Engine interface {
 // Replica is the source of truth, Storage is a materialized view
 
 type engineImpl struct {
+	mu       sync.Mutex
 	replica  *crdt.Replica    // CRDT state (source of truth)
 	store    storage.Store    // Persistent storage (materialized view)
 	key      *crypto.Key      // Encryption key (nil = disabled)
@@ -111,6 +116,26 @@ type engineImpl struct {
 	acls     *acl.Store       // Access control
 	hooks    *hooks.Manager   // Webhooks
 	localID  string           // Local Peer ID
+}
+
+func (e *engineImpl) reconcileLocalState() error {
+	entries, err := e.store.List(storage.ListFilter{Deleted: true})
+	if err != nil {
+		return fmt.Errorf("failed to load entries from storage: %w", err)
+	}
+	for _, entry := range entries {
+		e.replica.HydrateEntry(entry)
+	}
+
+	acls, err := e.acls.List()
+	if err != nil {
+		return fmt.Errorf("failed to load ACLs from storage: %w", err)
+	}
+	for _, acl := range acls {
+		e.replica.SetACL(acl)
+	}
+
+	return nil
 }
 
 // New creates a new engine instance
@@ -165,13 +190,20 @@ func New(cfg Config) (Engine, error) {
 
 	// Initialize ACL Store
 	var localPeerID string
-	nodeIDPath := filepath.Join(filepath.Dir(dbPath), "node_id")
-	
-	if idBytes, err := os.ReadFile(nodeIDPath); err == nil {
-		localPeerID = string(idBytes)
-	} else {
+	if cfg.InMemory {
+		// In-memory engines should not share process cwd state via ./node_id.
 		localPeerID = uuid.New().String()
-		os.WriteFile(nodeIDPath, []byte(localPeerID), 0644)
+	} else {
+		nodeIDPath := filepath.Join(filepath.Dir(dbPath), "node_id")
+		if idBytes, err := os.ReadFile(nodeIDPath); err == nil {
+			localPeerID = string(idBytes)
+		} else {
+			localPeerID = uuid.New().String()
+			if err := os.WriteFile(nodeIDPath, []byte(localPeerID), 0644); err != nil {
+				store.Close()
+				return nil, fmt.Errorf("failed to persist node id: %w", err)
+			}
+		}
 	}
 
 	aclStore, err := acl.NewStore(store.GetDB(), localPeerID)
@@ -216,6 +248,9 @@ func New(cfg Config) (Engine, error) {
 
 // AddEntry creates a new entry
 func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if !input.Type.IsValid() {
 		return Entry{}, fmt.Errorf("invalid entry type: %s", input.Type)
 	}
@@ -281,16 +316,23 @@ func (e *engineImpl) AddEntry(input AddEntryInput) (Entry, error) {
 
 // GetEntry retrieves an entry by ID
 func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return Entry{}, err
+	}
+
 	// Check read permission
 	if allowed, _ := e.acls.CheckRead(id, e.localID); !allowed {
-		return Entry{}, fmt.Errorf("permission denied")
+		return Entry{}, acl.ErrAccessDenied{EntryID: id, PeerID: e.localID, Action: "read"}
 	}
 
 	coreEntry, err := e.replica.GetEntry(id)
 	if err != nil {
 		return Entry{}, convertCRDTError(err)
 	}
-	
+
 	entry := toInternalEntry(coreEntry)
 	if e.key != nil && len(entry.Content) > 0 {
 		aad := []byte(id.String())
@@ -311,9 +353,16 @@ func (e *engineImpl) GetEntry(id uuid.UUID) (Entry, error) {
 
 // UpdateEntry updates an existing entry
 func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return err
+	}
+
 	// Check write permission
 	if allowed, _ := e.acls.CheckWrite(id, e.localID); !allowed {
-		return fmt.Errorf("permission denied")
+		return acl.ErrAccessDenied{EntryID: id, PeerID: e.localID, Action: "write"}
 	}
 
 	var content []byte
@@ -382,6 +431,17 @@ func (e *engineImpl) UpdateEntry(id uuid.UUID, input UpdateEntryInput) error {
 
 // DeleteEntry marks an entry as deleted
 func (e *engineImpl) DeleteEntry(id uuid.UUID) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return err
+	}
+
+	if allowed, _ := e.acls.CheckWrite(id, e.localID); !allowed {
+		return acl.ErrAccessDenied{EntryID: id, PeerID: e.localID, Action: "delete"}
+	}
+
 	// Delete in CRDT Replica (creates tombstone)
 	if err := e.replica.DeleteEntry(id); err != nil {
 		return convertCRDTError(err)
@@ -405,8 +465,51 @@ func (e *engineImpl) DeleteEntry(id uuid.UUID) error {
 	return nil
 }
 
+// GrantWrite authorizes a peer to write to an entry
+func (e *engineImpl) GrantWrite(id uuid.UUID, peerID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return err
+	}
+
+	// 1. Check admin permission (only owner can grant)
+	if allowed, _ := e.acls.CheckAdmin(id, e.localID); !allowed {
+		return acl.ErrAccessDenied{EntryID: id, PeerID: e.localID, Action: "grant write access"}
+	}
+
+	// 2. Update ACL store with a fresh timestamp
+	aclState, err := e.acls.GetACL(id)
+	if err != nil {
+		return err
+	}
+	for _, writer := range aclState.Writers {
+		if writer == peerID {
+			return nil
+		}
+	}
+	aclState.Writers = append(aclState.Writers, peerID)
+	aclState.Timestamp = e.replica.Clock().Tick()
+	if err := e.acls.SetACL(*aclState); err != nil {
+		return err
+	}
+
+	// 3. Update Sync Replica to ensure propagation
+	e.replica.SetACL(*aclState)
+
+	return nil
+}
+
 // ListEntries returns entries matching the filter
 func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return nil, err
+	}
+
 	// List from storage (it's the indexed/filtered view)
 	storeFilter := storage.ListFilter{
 		Type:    filter.Type,
@@ -423,8 +526,12 @@ func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
 		return nil, err
 	}
 
-	result := make([]Entry, len(entries))
-	for i, entry := range entries {
+	result := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if allowed, _ := e.acls.CheckRead(entry.ID, e.localID); !allowed {
+			continue
+		}
+
 		internal := toInternalEntry(entry)
 		if e.key != nil && len(internal.Content) > 0 {
 			aad := []byte(internal.ID.String())
@@ -434,86 +541,61 @@ func (e *engineImpl) ListEntries(filter ListFilter) ([]Entry, error) {
 			}
 			internal.Content = plaintext
 		}
-		
+
 		// Populate Owner
 		if acl, err := e.acls.GetACL(internal.ID); err == nil {
 			internal.Owner = acl.Owner
 		}
-		
-		result[i] = internal
+
+		result = append(result, internal)
 	}
 	return result, nil
 }
 
 // GetSyncPayload returns the current CRDT state for synchronization
 func (e *engineImpl) GetSyncPayload() ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.reconcileLocalState(); err != nil {
+		return nil, err
+	}
+
 	state := e.replica.State()
 	return json.Marshal(state)
 }
 
 // ApplyRemotePayload applies remote CRDT state and merges
 func (e *engineImpl) ApplyRemotePayload(payload []byte) error {
+	return e.ApplyRemotePayloadFromPeer(payload, "")
+}
+
+func (e *engineImpl) ApplyRemotePayloadFromPeer(payload []byte, senderPeerID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	var state crdt.ReplicaState
 	if err := json.Unmarshal(payload, &state); err != nil {
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
-
-	// Create temporary replica with received state
-	tempClock := core.NewClockWithTime(state.ClockTime)
-	tempReplica := crdt.NewReplica(tempClock)
-	tempReplica.LoadState(state)
-
-	// Merge into our replica
-	e.replica.Merge(tempReplica)
-
-	// Persist merged state to storage
-	for _, entry := range e.replica.ListEntries() {
-		// fmt.Printf("DEBUG: Persisting entry %s\n", entry.ID)
-		if err := e.store.Put(entry); err != nil {
-			return fmt.Errorf("failed to persist merged entry: %w", err)
-		}
-	}
-
-	// Persist merged ACLs
-	for _, acl := range e.replica.ListACLs() {
-		if err := e.acls.SetACL(acl); err != nil {
-			return fmt.Errorf("failed to persist merged ACL: %w", err)
-		}
-	}
-
-	return nil
+	return e.applyReplicaState(state, senderPeerID, senderPeerID != "")
 }
 
 // GetSyncState returns the current CRDT state (implements sync.Syncable)
 func (e *engineImpl) GetSyncState() crdt.ReplicaState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	_ = e.reconcileLocalState()
 	return e.replica.State()
 }
 
 // ApplySyncState applies remote CRDT state and merges (implements sync.Syncable)
-func (e *engineImpl) ApplySyncState(state crdt.ReplicaState) error {
-	// Create temporary replica with received state
-	tempClock := core.NewClockWithTime(state.ClockTime)
-	tempReplica := crdt.NewReplica(tempClock)
-	tempReplica.LoadState(state)
+func (e *engineImpl) ApplySyncState(state crdt.ReplicaState, senderPeerID string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	// Merge into our replica
-	e.replica.Merge(tempReplica)
-
-	// Persist merged state to storage
-	for _, entry := range e.replica.ListEntries() {
-		if err := e.store.Put(entry); err != nil {
-			return fmt.Errorf("failed to persist merged entry: %w", err)
-		}
-	}
-
-	// Persist merged ACLs
-	for _, acl := range e.replica.ListACLs() {
-		if err := e.acls.SetACL(acl); err != nil {
-			return fmt.Errorf("failed to persist merged ACL: %w", err)
-		}
-	}
-
-	return nil
+	return e.applyReplicaState(state, senderPeerID, true)
 }
 
 // Close releases all resources
@@ -569,7 +651,116 @@ func (e *engineImpl) ACL() *acl.Store {
 	return e.acls
 }
 
+func (e *engineImpl) PeerID() string {
+	return e.localID
+}
+
 // Hooks returns the hooks manager
 func (e *engineImpl) Hooks() *hooks.Manager {
 	return e.hooks
+}
+
+func (e *engineImpl) applyReplicaState(state crdt.ReplicaState, senderPeerID string, enforceAuth bool) error {
+	filtered := crdt.ReplicaState{
+		Entries:   make([]crdt.LWWElement, 0, len(state.Entries)),
+		Tags:      make(map[uuid.UUID]crdt.TagSetState),
+		ACLs:      make(map[uuid.UUID]core.ACL),
+		ClockTime: state.ClockTime,
+	}
+
+	acceptedEntries := make(map[uuid.UUID]struct{})
+
+	for _, elem := range state.Entries {
+		if e.allowRemoteEntry(elem, state.ACLs[elem.Entry.ID], senderPeerID, enforceAuth) {
+			filtered.Entries = append(filtered.Entries, elem)
+			if tags, ok := state.Tags[elem.Entry.ID]; ok {
+				filtered.Tags[elem.Entry.ID] = tags
+			}
+			acceptedEntries[elem.Entry.ID] = struct{}{}
+		}
+	}
+
+	for entryID, remoteACL := range state.ACLs {
+		if _, ok := acceptedEntries[entryID]; ok && e.allowRemoteACL(remoteACL, senderPeerID, enforceAuth) {
+			filtered.ACLs[entryID] = remoteACL
+			continue
+		}
+		if e.allowRemoteACL(remoteACL, senderPeerID, enforceAuth) {
+			filtered.ACLs[entryID] = remoteACL
+		}
+	}
+
+	tempClock := core.NewClockWithTime(filtered.ClockTime)
+	tempReplica := crdt.NewReplica(tempClock)
+	tempReplica.LoadState(filtered)
+	e.replica.Merge(tempReplica)
+
+	mergedState := e.replica.State()
+	for _, elem := range mergedState.Entries {
+		if err := e.store.Put(elem.Entry); err != nil {
+			return fmt.Errorf("failed to persist merged entry: %w", err)
+		}
+	}
+
+	for _, remoteACL := range filtered.ACLs {
+		if err := e.acls.SetACL(remoteACL); err != nil {
+			return fmt.Errorf("failed to persist merged ACL: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (e *engineImpl) allowRemoteEntry(elem crdt.LWWElement, remoteACL core.ACL, senderPeerID string, enforceAuth bool) bool {
+	if !enforceAuth {
+		return true
+	}
+	if senderPeerID == "" {
+		return false
+	}
+
+	localACL, err := e.acls.GetACL(elem.Entry.ID)
+	if err == nil && localACL.Owner != "" {
+		return e.canApplyForLocalACL(localACL, senderPeerID, elem.Deleted)
+	}
+
+	return remoteACL.EntryID == elem.Entry.ID && remoteACL.Owner == senderPeerID
+}
+
+func (e *engineImpl) allowRemoteACL(remoteACL core.ACL, senderPeerID string, enforceAuth bool) bool {
+	if !enforceAuth {
+		return true
+	}
+	if senderPeerID == "" || remoteACL.EntryID == uuid.Nil {
+		return false
+	}
+
+	localACL, err := e.acls.GetACL(remoteACL.EntryID)
+	if err != nil || localACL.Owner == "" {
+		return remoteACL.Owner == senderPeerID
+	}
+
+	return localACL.Owner == senderPeerID && remoteACL.Owner == localACL.Owner
+}
+
+func (e *engineImpl) canApplyForLocalACL(localACL *core.ACL, senderPeerID string, deleting bool) bool {
+	if localACL == nil {
+		return false
+	}
+	if deleting {
+		return e.peerHasWrite(localACL, senderPeerID)
+	}
+	return e.peerHasWrite(localACL, senderPeerID)
+}
+
+func (e *engineImpl) peerHasWrite(localACL *core.ACL, senderPeerID string) bool {
+	if localACL.Owner == senderPeerID || localACL.Owner == "" {
+		return true
+	}
+	for _, writer := range localACL.Writers {
+		if writer == senderPeerID {
+			return true
+		}
+	}
+	return false
 }

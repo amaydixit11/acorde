@@ -53,8 +53,8 @@ func (t EntryType) IsValid() bool {
 type Entry struct {
 	ID        uuid.UUID `json:"id"`
 	Type      EntryType `json:"type"`
-	Content   []byte    `json:"content"` // Opaque to acorde
-	Tags      []string  `json:"tags"`    // Never nil, use []string{} for no tags
+	Content   []byte    `json:"content"`    // Opaque to acorde
+	Tags      []string  `json:"tags"`       // Never nil, use []string{} for no tags
 	CreatedAt uint64    `json:"created_at"` // Logical time (Lamport)
 	UpdatedAt uint64    `json:"updated_at"` // Logical time (Lamport)
 	Deleted   bool      `json:"deleted"`    // Tombstone for CRDT
@@ -97,15 +97,21 @@ type Engine interface {
 	UpdateEntry(id uuid.UUID, input UpdateEntryInput) error
 	DeleteEntry(id uuid.UUID) error
 
+	// Access Control
+	GrantWrite(id uuid.UUID, peerID string) error
+
 	// Querying
 	ListEntries(filter ListFilter) ([]Entry, error)
 
 	// Sync hooks (called by transport layer)
 	GetSyncPayload() ([]byte, error)
 	ApplyRemotePayload(payload []byte) error
+	ApplyRemotePayloadFromPeer(payload []byte, peerID string) error
 
 	// Events - Subscribe to change notifications
 	Subscribe() Subscription
+
+	PeerID() string
 
 	// Lifecycle
 	Close() error
@@ -175,6 +181,10 @@ func (w *engineWrapper) DeleteEntry(id uuid.UUID) error {
 	return convertError(w.impl.DeleteEntry(id))
 }
 
+func (w *engineWrapper) GrantWrite(id uuid.UUID, peerID string) error {
+	return convertError(w.impl.GrantWrite(id, peerID))
+}
+
 func (w *engineWrapper) ListEntries(filter ListFilter) ([]Entry, error) {
 	var internalType *impl.EntryType
 	if filter.Type != nil {
@@ -204,10 +214,18 @@ func (w *engineWrapper) ListEntries(filter ListFilter) ([]Entry, error) {
 
 func (w *engineWrapper) GetSyncPayload() ([]byte, error) {
 	return w.impl.GetSyncPayload()
-	}
+}
 
 func (w *engineWrapper) ApplyRemotePayload(payload []byte) error {
 	return w.impl.ApplyRemotePayload(payload)
+}
+
+func (w *engineWrapper) ApplyRemotePayloadFromPeer(payload []byte, peerID string) error {
+	return w.impl.ApplyRemotePayloadFromPeer(payload, peerID)
+}
+
+func (w *engineWrapper) PeerID() string {
+	return w.impl.PeerID()
 }
 
 func (w *engineWrapper) Close() error {

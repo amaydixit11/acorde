@@ -1,14 +1,27 @@
 package engine
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
 	"testing"
 
+	"github.com/amaydixit11/acorde/internal/acl"
 	"github.com/amaydixit11/acorde/internal/core"
+	"github.com/amaydixit11/acorde/internal/crdt"
 	"github.com/google/uuid"
 )
 
 func newTestEngine(t *testing.T) Engine {
 	e, err := New(Config{InMemory: true})
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	return e
+}
+
+func newPersistentTestEngine(t *testing.T, dir string) Engine {
+	e, err := New(Config{DataDir: dir})
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
@@ -220,6 +233,49 @@ func TestListEntries(t *testing.T) {
 	}
 }
 
+func TestSyncStateIncludesExternalProcessWrites(t *testing.T) {
+	dir, err := os.MkdirTemp("", "acorde-engine-sync-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	daemon := newPersistentTestEngine(t, dir)
+	defer daemon.Close()
+
+	cli := newPersistentTestEngine(t, dir)
+	defer cli.Close()
+
+	entry, err := cli.AddEntry(AddEntryInput{
+		Type:    core.Note,
+		Content: []byte("from external process"),
+	})
+	if err != nil {
+		t.Fatalf("failed to add entry from second engine: %v", err)
+	}
+
+	payload, err := daemon.GetSyncPayload()
+	if err != nil {
+		t.Fatalf("failed to get sync payload: %v", err)
+	}
+
+	var state crdt.ReplicaState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		t.Fatalf("failed to decode sync payload: %v", err)
+	}
+
+	found := false
+	for _, elem := range state.Entries {
+		if elem.Entry.ID == entry.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected sync payload to include externally written entry %s", entry.ID)
+	}
+}
+
 func TestClockIncrementsMonotonically(t *testing.T) {
 	e := newTestEngine(t)
 	defer e.Close()
@@ -234,5 +290,55 @@ func TestClockIncrementsMonotonically(t *testing.T) {
 			t.Errorf("clock should be monotonically increasing: %d <= %d", entry.CreatedAt, lastTime)
 		}
 		lastTime = entry.CreatedAt
+	}
+}
+
+func TestListEntriesFiltersUnreadEntries(t *testing.T) {
+	e := newTestEngine(t).(*engineImpl)
+	defer e.Close()
+
+	entry, err := e.AddEntry(AddEntryInput{
+		Type:    core.Note,
+		Content: []byte("private"),
+	})
+	if err != nil {
+		t.Fatalf("failed to add entry: %v", err)
+	}
+
+	e.localID = "peer-b"
+
+	entries, err := e.ListEntries(ListFilter{})
+	if err != nil {
+		t.Fatalf("failed to list entries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected private entry to be filtered from list, got %d entries", len(entries))
+	}
+
+	_, err = e.GetEntry(entry.ID)
+	var denied acl.ErrAccessDenied
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected access denied from get, got %v", err)
+	}
+}
+
+func TestDeleteEntryRequiresWriteAccess(t *testing.T) {
+	e := newTestEngine(t).(*engineImpl)
+	defer e.Close()
+
+	entry, err := e.AddEntry(AddEntryInput{
+		Type:    core.Note,
+		Content: []byte("private"),
+	})
+	if err != nil {
+		t.Fatalf("failed to add entry: %v", err)
+	}
+
+	e.localID = "peer-b"
+
+	err = e.DeleteEntry(entry.ID)
+	var denied acl.ErrAccessDenied
+	if !errors.As(err, &denied) {
+		t.Fatalf("expected access denied from delete, got %v", err)
 	}
 }
