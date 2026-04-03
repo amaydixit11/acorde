@@ -1,52 +1,41 @@
 # ACORDE
 
-ACORDE is a local-first sync engine for apps that should keep working offline, store data on-device, and replicate directly between trusted peers without depending on a central backend.
+**Local-first sync engine for apps that work offline, store data on-device, and replicate directly between trusted peers — no central backend required.**
 
-It combines:
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![License](https://img.shields.io/github/license/amaydixit11/acorde)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat&logo=docker)](docker-compose.yml)
 
-- SQLite for durable local storage
-- CRDT replication for conflict-tolerant merges
-- libp2p for peer-to-peer sync
-- optional encrypted vaults for at-rest protection
-- per-entry ownership and writer permissions
+---
 
-## Why It Exists
+## What is ACORDE?
 
-Most apps are still built around a server being the source of truth. ACORDE takes the opposite approach:
+ACORDE is a Go library and CLI that gives your app conflict-tolerant, peer-to-peer sync without a server. It combines:
 
-- the local device is authoritative
-- sync is a replication problem, not a request/response dependency
-- peers can discover each other on a LAN or connect through explicit pairing
-- conflicts are merged instead of treated as fatal errors
+- **SQLite** — durable, on-device storage
+- **CRDTs** — automatic conflict resolution via Last-Write-Wins registers and OR-Sets
+- **libp2p** — peer-to-peer transport with mDNS discovery or explicit pairing
+- **Encrypted vaults** — optional at-rest encryption per data directory
+- **Per-entry ACLs** — ownership and writer permissions baked into the data model
 
-This makes it a good fit for:
+The device is the source of truth. Sync is a replication problem, not a request/response dependency. Conflicts are merged, not rejected.
 
-- offline-capable note or log apps
-- peer-to-peer tools on a local network
-- private, user-owned data stores
-- prototypes that need sync semantics without building a full backend first
+### Good fits
 
-## Current Product Shape
+- Offline-capable note or log apps
+- Local-network peer-to-peer tools
+- Private, user-owned data stores
+- Prototypes that need sync semantics without standing up a backend
 
-Today ACORDE gives you:
+---
 
-- a CLI for local CRUD, pairing, encryption, and permissions
-- a long-running `daemon` mode that runs sync and the REST API together
-- direct peer syncing over mDNS or allowlisted pairing
-- private entries with explicit writer authorization
-- encrypted vault support through `acorde init`
-
-The easiest way to treat it as a product is to run the daemon and use either the CLI or the HTTP API against the same vault.
-
-## Quick Start
-
-### Install
+## Install
 
 ```bash
 go install github.com/amaydixit11/acorde/cmd/acorde@latest
 ```
 
-Or build locally:
+Or build from source:
 
 ```bash
 git clone https://github.com/amaydixit11/acorde.git
@@ -54,148 +43,254 @@ cd acorde
 go build -o acorde ./cmd/acorde
 ```
 
-### Start One Node
+Or run with Docker:
 
 ```bash
-acorde daemon --data /tmp/acorde-main --port 4101 --api-port 7401
+docker compose up
 ```
 
-In another terminal:
+> **Requirements:** Go 1.25+, CGO enabled (for SQLite). See [docs/setup.md](docs/setup.md) for platform-specific notes.
+
+---
+
+## Quick Start
+
+### Single node
 
 ```bash
-acorde add --data /tmp/acorde-main --type note --content "hello"
-acorde list --data /tmp/acorde-main
-curl -s http://localhost:7401/entries
-```
-
-### Start Two Nodes
-
-Terminal 1:
-
-```bash
+# Start the daemon (local engine + p2p sync + REST API)
 acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
-```
 
-Terminal 2:
-
-```bash
-acorde daemon --data /tmp/acorde-b --port 4002 --api-port 7332
-```
-
-Terminal 3:
-
-```bash
-acorde add --data /tmp/acorde-a --type note --content "hello from A"
-sqlite3 /tmp/acorde-b/acorde.db 'select id,type,updated_at,deleted from entries order by id;'
-```
-
-That verifies replication reached B's local store.
-
-## The Main CLI
-
-```bash
-acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
-acorde add --data /tmp/acorde-a --type note --content "hello"
+# In another terminal
+acorde add  --data /tmp/acorde-a --type note --content "hello"
 acorde list --data /tmp/acorde-a
-acorde get --data /tmp/acorde-a <entry-id>
-acorde update --data /tmp/acorde-a <entry-id> --content "updated"
-acorde delete --data /tmp/acorde-a <entry-id>
-acorde authorize --data /tmp/acorde-a <entry-id> <peer-id>
-acorde invite --data /tmp/acorde-a
-acorde pair --data /tmp/acorde-b 'acorde://...'
-acorde init --data /tmp/acorde-enc-a
+curl -s http://localhost:7331/entries
 ```
 
-## Product Flows
-
-### 1. Local-Only App
-
-If you only need offline local storage:
+### Two nodes syncing
 
 ```bash
-acorde add --data ./data --type note --content "draft"
-acorde list --data ./data
+# Terminal 1
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
+
+# Terminal 2
+acorde daemon --data /tmp/acorde-b --port 4002 --api-port 7332
+
+# Terminal 3 — write on A, verify it reached B
+acorde add --data /tmp/acorde-a --type note --content "hello from A"
+sqlite3 /tmp/acorde-b/acorde.db \
+  'select id,type,updated_at,deleted from entries order by id;'
 ```
 
-### 2. Daemon + REST API
+Both nodes discover each other automatically via mDNS on the same LAN.
 
-If you want one process that keeps local state, sync, and HTTP together:
+---
+
+## Usage Modes
+
+### 1. Local-only storage
+
+No sync, no daemon — just a local SQLite-backed store.
+
+```bash
+acorde add  --data ./data --type note --content "draft"
+acorde list --data ./data
+acorde get  --data ./data <entry-id>
+acorde update --data ./data <entry-id> --content "revised"
+acorde delete --data ./data <entry-id>
+```
+
+### 2. Daemon with REST API
+
+Run a single process that manages local state, sync, and an HTTP API together.
 
 ```bash
 acorde daemon --data ./data --port 4001 --api-port 7331
 ```
 
-This starts:
+This starts the local engine, the p2p sync service, and the REST API at `http://localhost:7331`.
 
-- the local engine
-- the p2p sync service
-- the REST API on `http://localhost:7331`
+### 3. Explicit peer pairing (no mDNS)
 
-### 3. Direct Pairing
-
-For explicit peer trust without relying on mDNS:
-
-Device A:
+For cross-network pairing or when you want explicit trust without broadcast discovery.
 
 ```bash
-acorde daemon --data /tmp/acorde-pair-a --port 4021 --api-port 7351 --mdns=false
-acorde invite --data /tmp/acorde-pair-a
+# Device A — generate an invite link
+acorde daemon  --data /tmp/a --port 4021 --api-port 7351 --mdns=false
+acorde invite  --data /tmp/a
+# prints: acorde://...
+
+# Device B — pair using the link, then start daemon
+acorde pair    --data /tmp/b 'acorde://...'
+acorde daemon  --data /tmp/b --port 4022 --api-port 7352 --mdns=false
 ```
 
-Device B:
+### 4. Encrypted vault
 
 ```bash
-acorde pair --data /tmp/acorde-pair-b 'acorde://...'
-acorde daemon --data /tmp/acorde-pair-b --port 4022 --api-port 7352 --mdns=false
+acorde init --data /tmp/enc-a          # initializes an encrypted vault
+acorde add  --data /tmp/enc-a --type note --content "secret"
+acorde get  --data /tmp/enc-a <entry-id>
 ```
 
-### 4. Encrypted Vault
+---
 
-```bash
-acorde init --data /tmp/acorde-enc-a
-acorde add --data /tmp/acorde-enc-a --type note --content "secret"
-acorde get --data /tmp/acorde-enc-a <entry-id>
-```
+## CLI Reference
+
+| Command | Description |
+|---|---|
+| `acorde daemon` | Start the sync daemon and REST API |
+| `acorde add` | Create a new entry |
+| `acorde list` | List readable entries |
+| `acorde get <id>` | Get a single entry |
+| `acorde update <id>` | Update content or tags |
+| `acorde delete <id>` | Tombstone an entry (replicates to peers) |
+| `acorde authorize <id> <peer-id>` | Grant write access to a peer |
+| `acorde invite` | Generate a pairing invite link |
+| `acorde pair <link>` | Accept an invite and add a trusted peer |
+| `acorde init` | Initialize an encrypted vault |
+
+**Common flags:**
+
+| Flag | Description |
+|---|---|
+| `--data <path>` | Data directory (required) |
+| `--port <n>` | p2p listen port (default: 4001) |
+| `--api-port <n>` | REST API port |
+| `--mdns=false` | Disable mDNS peer discovery |
+| `--name <name>` | Human-readable node name |
+
+---
 
 ## REST API
 
-When `daemon` is started with `--api-port`, these endpoints are available:
+Start the daemon with `--api-port` to enable the HTTP API.
 
 | Method | Endpoint | Description |
-| --- | --- | --- |
+|---|---|---|
 | `GET` | `/entries` | List readable entries |
 | `POST` | `/entries` | Create an entry |
-| `GET` | `/entries/:id` | Get an entry |
+| `GET` | `/entries/:id` | Get a single entry |
 | `PUT` | `/entries/:id` | Update an entry |
 | `DELETE` | `/entries/:id` | Tombstone an entry |
 | `POST` | `/entries/:id/authorize` | Grant write access to a peer |
-| `GET` | `/status` | Basic node status |
+| `GET` | `/status` | Node status |
 | `GET` | `/events` | Server-sent event stream |
 
-Example:
-
 ```bash
-curl -s http://localhost:7331/entries
+# Create
 curl -s -X POST http://localhost:7331/entries \
   -H 'Content-Type: application/json' \
   -d '{"type":"note","content":"hello","tags":["demo"]}'
+
+# List
+curl -s http://localhost:7331/entries
+
+# Stream live events
+curl -s http://localhost:7331/events
 ```
 
-## Important Behavior Notes
+---
 
-- New entries are private by default.
-- `authorize` grants writer access; writers can also read the entry.
-- Private synced entries can exist in another peer's SQLite DB without appearing in `list`, `get`, or `/entries` until that peer has access.
-- CLI writes made against a vault while its daemon is already running are picked up and synced by that daemon.
-- Deletes are tombstones and replicate across peers.
+## How Sync Works
 
-## For Builders
+ACORDE's CRDT layer ensures all peers converge to the same state regardless of the order operations arrive.
 
-ACORDE also exposes a Go engine package if you want to embed it directly instead of shelling out to the CLI.
+- **Entries** use a Last-Write-Wins (LWW) register — the update with the highest logical timestamp wins on merge.
+- **Tags** use an Observed-Remove Set (OR-Set) — concurrent adds from different peers are preserved; removes only remove what a peer has seen.
+- **Deletes** are tombstones that replicate and are never silently lost.
+- **Private entries** sync to peers as opaque records; they won't appear in `list`, `get`, or `/entries` on a peer that hasn't been authorized.
+- **ACLs** are part of the CRDT state and replicate along with entries.
 
-Start here:
+For a deeper explanation, see [docs/WHY_CRDT.md](docs/WHY_CRDT.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-- [Setup Guide](docs/setup.md)
-- [API Reference](docs/API.md)
-- [Feature Notes](docs/FEATURES.md)
-- [Developer Guide](docs/DEVELOPER_GUIDE.md)
+---
+
+## Embedding the Engine
+
+ACORDE exposes a Go package so you can embed the sync engine directly instead of shelling out to the CLI.
+
+```go
+import "github.com/amaydixit11/acorde/internal/engine"
+
+e, err := engine.New(engine.Config{
+    DataDir: "./data",
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer e.Close()
+
+entry, err := e.AddEntry(engine.AddEntryInput{
+    Type:    core.Note,
+    Content: []byte("hello from Go"),
+    Tags:    []string{"example"},
+})
+```
+
+See [docs/API.md](docs/API.md) for the full engine interface and [examples/](examples/) for working CLI and web examples.
+
+---
+
+## Docker
+
+```bash
+# Build and run a single node
+docker compose up
+
+# Or build the image directly
+docker build -t acorde .
+docker run -p 4001:4001 -p 7331:7331 -v $(pwd)/data:/home/acorde/data acorde
+```
+
+The container exposes port `4001` for p2p (TCP/UDP) and `7331` for the REST API. mDNS is disabled by default in Docker; use explicit pairing for multi-container setups.
+
+---
+
+## Android (Termux)
+
+ACORDE runs on Android via [Termux](https://termux.dev) (install from F-Droid, not the Play Store).
+
+```bash
+pkg update && pkg upgrade
+pkg install golang git
+git clone https://github.com/amaydixit11/acorde.git
+cd acorde/cmd/acorde
+go build -o acorde .
+./acorde daemon --data ~/acorde-data --port 4001 --api-port 7331
+```
+
+See [docs/ANDROID.md](docs/ANDROID.md) for troubleshooting Go version issues on newer Android releases and tips for keeping the daemon running in the background.
+
+---
+
+## Behavior Notes
+
+- New entries are **private by default**. Use `authorize` or `POST /entries/:id/authorize` to grant access to a peer.
+- Writers can also read the entries they're authorized on.
+- CLI writes made against a vault while its daemon is running are picked up and synced automatically.
+- Tombstoned entries replicate to all peers; deletion is not silent.
+
+---
+
+## Documentation
+
+| Doc | Description |
+|---|---|
+| [docs/setup.md](docs/setup.md) | Installation and platform setup |
+| [docs/API.md](docs/API.md) | REST API and Go engine reference |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design overview |
+| [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Contributing and dev workflow |
+| [docs/WHY_CRDT.md](docs/WHY_CRDT.md) | Why CRDTs and which ones |
+| [docs/WHY_NO_SERVER.md](docs/WHY_NO_SERVER.md) | Design rationale |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature notes and status |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security model |
+| [docs/ANDROID.md](docs/ANDROID.md) | Running on Android via Termux |
+| [ROADMAP.md](ROADMAP.md) | Planned features |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution guide |
+
+---
+
+## License
+
+[See LICENSE](LICENSE)
