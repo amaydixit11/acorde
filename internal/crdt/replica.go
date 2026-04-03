@@ -24,21 +24,25 @@ func NewReplica(clock *core.Clock) *Replica {
 	}
 }
 
+// Clock returns the underlying Lamport clock
+func (r *Replica) Clock() *core.Clock {
+	return r.clock
+}
+
 // HydrateEntry loads an existing entry from storage into the CRDT.
 // Used during startup to populate the replica from durable storage.
 func (r *Replica) HydrateEntry(entry core.Entry) {
 	// Add entry to LWW-Set
 	r.entries.Add(entry)
 
-	// Add tags to OR-Set (each tag gets a deterministic token based on entry ID)
-	if len(entry.Tags) > 0 {
-		tagSet := r.getOrCreateTagSet(entry.ID)
-		for _, tag := range entry.Tags {
-			// Use namespace UUID to generate deterministic token
-			token := uuid.NewSHA1(entry.ID, []byte(tag))
-			tagSet.AddWithToken(tag, token)
-		}
+	// Replace the persisted tag view for this entry with the current stored tags.
+	tagSet := NewORSet()
+	for _, tag := range entry.Tags {
+		// Use namespace UUID to generate deterministic token
+		token := uuid.NewSHA1(entry.ID, []byte(tag))
+		tagSet.AddWithToken(tag, token)
 	}
+	r.tags[entry.ID] = tagSet
 }
 
 // AddEntry adds a new entry to the replica.
@@ -97,20 +101,20 @@ func (r *Replica) UpdateEntry(id uuid.UUID, content *[]byte, updateTags *[]strin
 	// Update tags if provided
 	if updateTags != nil {
 		tagSet := r.getOrCreateTagSet(id)
-		
+
 		// CRDT Set Semantics for "Update":
 		// Is it "Set these tags" (replace) or "Add these tags"?
 		// User requirement says current implementation "removes all existing tags... even from other replicas".
 		// This happens because we iterate tagSet.Elements() and Remove() them.
 		// If we want "Replace" semantics in LWW/OR-Set, we indeed remove local view.
-		// But Concurrent Adds should survive? 
+		// But Concurrent Adds should survive?
 		// In OR-Set, Remove(tag) adds a "tombstone" for the *specific tokens* we see.
 		// If another replica added a tag with a different token *before* we merge, and we haven't seen it, we can't remove it.
 		// If we HAVE seen it, we remove it.
 		// So actually, clearing local view IS the correct way to implement "Replace" in OR-Set.
 		// But maybe the user wants "Merge" semantics (Add/Remove specific tags)?
 		// "Fix: Use Add-Wins semantics or make tags a full LWW-Map"
-		
+
 		// If the user wants to keep OTHER tags, they should probably do GET -> MODIFY -> UPDATE.
 		// But if they say it's a bug, let's assume they expect "Add/Remove" delta or "Merge".
 		// However, the input is just `[]string`.
@@ -119,24 +123,24 @@ func (r *Replica) UpdateEntry(id uuid.UUID, content *[]byte, updateTags *[]strin
 		// AND it respects concurrent adds?
 		// If we blindly remove everything, we generate tombstones for everything we see.
 		// If we only remove what's missing, we are safer.
-		
+
 		currentTags := make(map[string]struct{})
 		for _, t := range tagSet.Elements() {
 			currentTags[t] = struct{}{}
 		}
-		
+
 		newTags := make(map[string]struct{})
 		for _, t := range *updateTags {
 			newTags[t] = struct{}{}
 		}
-		
+
 		// Remove tags not in new list
 		for t := range currentTags {
 			if _, keep := newTags[t]; !keep {
 				tagSet.Remove(t)
 			}
 		}
-		
+
 		// Add new tags
 		for t := range newTags {
 			if _, exists := currentTags[t]; !exists {
@@ -201,7 +205,7 @@ func (r *Replica) SetACL(acl core.ACL) {
 	if !exists || acl.Timestamp > existing.Timestamp {
 		r.acls[acl.EntryID] = acl
 	} else if acl.Timestamp == existing.Timestamp {
-		// Tie-breaker: Lexicographical comparison of Owner string? 
+		// Tie-breaker: Lexicographical comparison of Owner string?
 		// Or assume identical if timestamps match?
 		// For robustness, let's use Owner for determinism
 		if acl.Owner > existing.Owner {
@@ -232,11 +236,9 @@ func (r *Replica) ListACLs() []core.ACL {
 // - Concurrent tag updates from different replicas will be merged
 // - Both sets of tags will be present after merge (OR-Set behavior)
 func (r *Replica) Merge(other *Replica) {
-	// Update clock FIRST (before merging state)
-	// This ensures causal consistency: any new operations after merge
-	// will have timestamps higher than all merged entries
-	otherMaxTime := other.MaxTimestamp()
-	r.clock.Update(otherMaxTime)
+	// Update clock to ensure logical time convergence.
+	// We use the other replica's current clock time, not just its max entry time.
+	r.clock.Update(other.clock.Now())
 
 	// Merge entries (LWW-Set)
 	r.entries.Merge(other.entries)
@@ -301,11 +303,21 @@ func (r *Replica) Clone() *Replica {
 
 // State returns the current state for serialization/sync.
 func (r *Replica) State() ReplicaState {
+	// Synchronize tags in all entries before exporting
+	elements := r.entries.AllElements()
+	for i, elem := range elements {
+		if tagSet, exists := r.tags[elem.Entry.ID]; exists {
+			elements[i].Entry.Tags = tagSet.Elements()
+		} else {
+			elements[i].Entry.Tags = []string{}
+		}
+	}
+
 	return ReplicaState{
-		Entries:      r.entries.AllElements(),
-		Tags:         r.exportTags(),
-		ACLs:         r.acls,
-		ClockTime:    r.clock.Now(),
+		Entries:   elements,
+		Tags:      r.exportTags(),
+		ACLs:      r.acls,
+		ClockTime: r.clock.Now(),
 	}
 }
 
@@ -427,10 +439,10 @@ func (r *Replica) EntriesSince(since uint64) []LWWElement {
 // DeltaState returns only changes since the given timestamp.
 func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
 	entries := r.EntriesSince(since)
-	
+
 	// Collect tags for changed entries
 	tags := make(map[uuid.UUID]TagSetState)
-	
+
 	// Collect changed ACLs
 	acls := make(map[uuid.UUID]core.ACL)
 
@@ -451,7 +463,7 @@ func (r *Replica) DeltaState(since uint64) DeltaReplicaState {
 			}
 		}
 	}
-	
+
 	return DeltaReplicaState{
 		Entries:   entries,
 		Tags:      tags,
@@ -476,7 +488,7 @@ func (r *Replica) ApplyDelta(delta DeltaReplicaState) {
 	for _, elem := range delta.Entries {
 		r.entries.Add(elem.Entry)
 	}
-	
+
 	// Apply tags
 	for id, tagState := range delta.Tags {
 		tagSet := r.getOrCreateTagSet(id)
@@ -492,8 +504,7 @@ func (r *Replica) ApplyDelta(delta DeltaReplicaState) {
 	for _, acl := range delta.ACLs {
 		r.SetACL(acl)
 	}
-	
+
 	// Update clock
 	r.clock.Update(delta.ClockTime)
 }
-

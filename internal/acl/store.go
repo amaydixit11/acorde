@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/google/uuid"
@@ -19,7 +21,6 @@ const (
 	PermWrite
 	PermAdmin
 )
-
 
 // Store manages ACLs in SQLite
 type Store struct {
@@ -48,15 +49,26 @@ func (s *Store) initSchema() error {
 			owner TEXT NOT NULL,
 			readers TEXT NOT NULL,
 			writers TEXT NOT NULL,
-			public INTEGER NOT NULL DEFAULT 0
+			public INTEGER NOT NULL DEFAULT 0,
+			timestamp INTEGER NOT NULL DEFAULT 0
 		);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`ALTER TABLE entry_acl ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetACL sets the ACL for an entry
 func (s *Store) SetACL(acl core.ACL) error {
+	if acl.Timestamp == 0 {
+		acl.Timestamp = uint64(time.Now().UnixNano())
+	}
 	readersJSON, _ := json.Marshal(acl.Readers)
 	writersJSON, _ := json.Marshal(acl.Writers)
 	public := 0
@@ -65,9 +77,9 @@ func (s *Store) SetACL(acl core.ACL) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO entry_acl (entry_id, owner, readers, writers, public)
-		VALUES (?, ?, ?, ?, ?)
-	`, acl.EntryID.String(), acl.Owner, readersJSON, writersJSON, public)
+		INSERT OR REPLACE INTO entry_acl (entry_id, owner, readers, writers, public, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, acl.EntryID.String(), acl.Owner, readersJSON, writersJSON, public, acl.Timestamp)
 
 	return err
 }
@@ -80,10 +92,10 @@ func (s *Store) GetACL(entryID uuid.UUID) (*core.ACL, error) {
 	var public int
 
 	err := s.db.QueryRow(`
-		SELECT entry_id, owner, readers, writers, public
+		SELECT entry_id, owner, readers, writers, public, timestamp
 		FROM entry_acl
 		WHERE entry_id = ?
-	`, entryID.String()).Scan(&entryIDStr, &acl.Owner, &readersJSON, &writersJSON, &public)
+	`, entryID.String()).Scan(&entryIDStr, &acl.Owner, &readersJSON, &writersJSON, &public, &acl.Timestamp)
 
 	if err == sql.ErrNoRows {
 		// No ACL = public access
@@ -114,7 +126,7 @@ func (s *Store) DeleteACL(entryID uuid.UUID) error {
 // List returns all ACLs
 func (s *Store) List() ([]core.ACL, error) {
 	rows, err := s.db.Query(`
-		SELECT entry_id, owner, readers, writers, public
+		SELECT entry_id, owner, readers, writers, public, timestamp
 		FROM entry_acl
 	`)
 	if err != nil {
@@ -129,7 +141,7 @@ func (s *Store) List() ([]core.ACL, error) {
 		var readersJSON, writersJSON []byte
 		var public int
 
-		if err := rows.Scan(&entryIDStr, &acl.Owner, &readersJSON, &writersJSON, &public); err != nil {
+		if err := rows.Scan(&entryIDStr, &acl.Owner, &readersJSON, &writersJSON, &public, &acl.Timestamp); err != nil {
 			return nil, err
 		}
 
@@ -137,7 +149,7 @@ func (s *Store) List() ([]core.ACL, error) {
 		json.Unmarshal(readersJSON, &acl.Readers)
 		json.Unmarshal(writersJSON, &acl.Writers)
 		acl.Public = public == 1
-		
+
 		acls = append(acls, acl)
 	}
 	return acls, nil
