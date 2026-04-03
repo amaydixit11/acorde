@@ -52,11 +52,8 @@
 # Initialize a new vault (first time only)
 acorde init
 
-# Start the REST API server
-acorde serve --port 7331
-
-# Or start the P2P sync daemon
-acorde daemon
+# Start the daemon and REST API together
+acorde daemon --api-port 7331
 ```
 
 ### 2. Create an Entry via REST
@@ -94,6 +91,7 @@ Base URL: `http://localhost:7331`
 | `GET` | `/entries/:id` | Get entry by UUID |
 | `PUT` | `/entries/:id` | Update entry content/tags |
 | `DELETE` | `/entries/:id` | Soft-delete entry |
+| `POST` | `/entries/:id/authorize` | Grant write access to a peer |
 | `GET` | `/status` | Get vault status |
 | `GET` | `/events` | Server-Sent Events stream |
 
@@ -440,7 +438,7 @@ fmt.Printf("Imported %d entries\n", result.Imported)
 
 1. **Discovery**: Peers find each other via mDNS (LAN) or DHT (Internet).
 2. **Handshake**: Peers exchange state hashes.
-3. **Delta Sync**: Only changed entries are transferred.
+3. **State Exchange**: Peers exchange and merge replica state when hashes differ.
 4. **Merge**: CRDTs automatically resolve conflicts.
 
 ### CRDT Details
@@ -453,11 +451,12 @@ fmt.Printf("Imported %d entries\n", result.Imported)
 
 ```bash
 # Device A: Generate invite
-acorde invite --share-key
-# Output: acorde://QmPeerID@192.168.1.5:4001?key=...
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331 --mdns=false
+acorde invite --data /tmp/acorde-a
 
 # Device B: Accept invite
-acorde pair "acorde://..."
+acorde pair --data /tmp/acorde-b "acorde://..."
+acorde daemon --data /tmp/acorde-b --port 4002 --api-port 7332 --mdns=false
 ```
 
 ---

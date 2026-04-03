@@ -19,9 +19,9 @@ go build
 A simple web UI that uses the **REST API** to manage notes.
 
 ```bash
-# Terminal 1: Start acorde REST server
+# Terminal 1: Start acorde daemon + REST API
 cd ../..
-acorde serve --port 7331
+acorde daemon --api-port 7331
 
 # Terminal 2: Open the web app
 cd notes-web
@@ -46,8 +46,8 @@ entry, _ := e.AddEntry(engine.AddEntryInput{
 
 ### Option 2: Use REST API
 ```bash
-# Start server
-acorde serve --port 7331
+# Start daemon + API
+acorde daemon --api-port 7331
 
 # Create entry
 curl -X POST http://localhost:7331/entries \

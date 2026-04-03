@@ -1,126 +1,201 @@
 # Acorde API Reference
 
-Complete reference for the Acorde REST API and Go library.
+This document covers the REST API exposed by `acorde daemon --api-port ...` and the main public Go engine surface.
+
+## Start The Server
+
+```bash
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
+```
 
 ## REST API
-
-Start the server (and sync daemon):
-```bash
-./acorde daemon --api-port 7331
-```
 
 ### Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/entries` | List entries with filtering |
-| `POST` | `/entries` | Create new entry |
-| `GET` | `/entries/:id` | Get entry by UUID |
-| `PUT` | `/entries/:id` | Update entry content/tags |
-| `DELETE` | `/entries/:id`| Soft delete entry |
-| `GET` | `/status` | Server status |
-| `GET` | `/events` | Real-time SSE stream |
+| --- | --- | --- |
+| `GET` | `/entries` | List readable entries |
+| `POST` | `/entries` | Create an entry |
+| `GET` | `/entries/:id` | Get a readable entry |
+| `PUT` | `/entries/:id` | Update an entry |
+| `DELETE` | `/entries/:id` | Tombstone an entry |
+| `POST` | `/entries/:id/authorize` | Grant write access to a peer |
+| `GET` | `/status` | Basic status and peer count |
+| `GET` | `/events` | SSE change stream |
 
-#### List Entries
+### List Entries
+
 ```http
 GET /entries?type=note&tag=work
 ```
 
-#### Create Entry
+Response:
+
+```json
+[
+  {
+    "id": "b786ab30-823e-4da8-931f-0ee82c5e2f7e",
+    "type": "note",
+    "content": "aGVsbG8=",
+    "tags": [],
+    "created_at": 1,
+    "updated_at": 1,
+    "deleted": false,
+    "owner": "12D3KooW..."
+  }
+]
+```
+
+Notes:
+
+- `content` is JSON base64 because the field is `[]byte`.
+- Private entries are filtered out for peers without read access.
+
+### Create Entry
+
 ```http
 POST /entries
 Content-Type: application/json
 
 {
-  "id": "...",
   "type": "note",
-  "content": "Hello World",
-  "tags": ["work", "important"],
-  "owner": "12D3Koo..." // Output only
+  "content": "hello",
+  "tags": ["demo"]
 }
 ```
 
+### Get Entry
+
+```http
+GET /entries/ENTRY_ID
+```
+
+Returns:
+
+- `200` when readable
+- `403` when access is denied
+- `404` when missing
+
+### Update Entry
+
+```http
+PUT /entries/ENTRY_ID
+Content-Type: application/json
+
+{
+  "content": "updated hello",
+  "tags": ["demo", "updated"]
+}
+```
+
+Returns:
+
+- `204` on success
+- `403` when the caller lacks write permission
+- `404` when missing
+
+### Delete Entry
+
+```http
+DELETE /entries/ENTRY_ID
+```
+
+This is a tombstone delete, not a hard physical delete.
+
+### Authorize A Writer
+
+```http
+POST /entries/ENTRY_ID/authorize
+Content-Type: application/json
+
+{
+  "peer_id": "12D3KooW..."
+}
+```
+
+Returns:
+
+- `204` on success
+- `403` when the caller is not the owner/admin
+- `404` when the entry is missing
+
+### Status
+
+```http
+GET /status
+```
+
+Example:
+
+```json
+{
+  "status": "ok",
+  "entry_count": 3,
+  "peer_count": 1
+}
+```
+
+### Events
+
+```http
+GET /events
+```
+
+This is a server-sent event stream. Each event is emitted as JSON after `data:`.
+
 ## Go Library
 
-### Installation
-```bash
-go get github.com/amaydixit11/acorde/pkg/engine
-```
+### Create An Engine
 
-### Basic Lifecycle
 ```go
-import "github.com/amaydixit11/acorde/pkg/engine"
-
-// Initialize
-e, _ := engine.New(engine.Config{
+e, err := engine.New(engine.Config{
     DataDir: "./data",
-    MaxVersions: 50, // Enable version history
+})
+if err != nil {
+    panic(err)
+}
+defer e.Close()
+```
+
+### Core Operations
+
+```go
+entry, err := e.AddEntry(engine.AddEntryInput{
+    Type:    engine.Note,
+    Content: []byte("hello"),
+    Tags:    []string{"demo"},
 })
 
-// Register Schema (Optional)
-e.RegisterSchema("task", []byte(`{"type":"object", "required":["title"]}`))
-
-// Add Entry (Version 1 saved)
-entry, _ := e.AddEntry(engine.AddEntryInput{
-    Type: "task", 
-    Content: []byte(`{"title":"Work"}`),
+err = e.UpdateEntry(entry.ID, engine.UpdateEntryInput{
+    Content: ptr([]byte("updated")),
 })
 
-// Update Entry (Version 2 saved)
-e.UpdateEntry(entry.ID, engine.UpdateEntryInput{...})
-
-// History Access
-history, _ := e.Versions().GetHistory(entry.ID)
+entries, err := e.ListEntries(engine.ListFilter{})
+got, err := e.GetEntry(entry.ID)
+err = e.DeleteEntry(entry.ID)
 ```
 
-### Feature Accessors
-
-#### Versioning
-```go
-// Get all versions
-history, err := e.Versions().GetHistory(entryID)
-
-// Restore version
-version, err := e.Versions().GetVersion(entryID, versionID)
-```
-
-#### Access Control (ACL)
-```go
-// Check permissions
-canWrite, _ := e.ACL().CheckWrite(entryID, myPeerID)
-
-// Grant access
-e.ACL().GrantRead(entryID, alicePeerID)
-
-// Make public
-e.ACL().MakePublic(entryID)
-```
-
-#### Webhooks
-```go
-hooks := engine.NewHookManager()
-hooks.OnCreate(func(e engine.HookEvent) {
-    fmt.Printf("New entry: %s", e.EntryID)
-})
-```
-
-#### Multi-Vault
-```go
-mgr, _ := engine.NewVaultManager("~/.acorde")
-workVault, _ := mgr.Create("work")
-mgr.SetActive("work")
-```
-
-### Query Language
+### Access Control
 
 ```go
-// String DSL
-results, err := e.Query(`type = "note" AND tags CONTAINS "work" LIMIT 10`)
-
-// Fluent Builder
-entries, err := e.NewQuery().
-    Type(engine.Note).
-    Tag("work").
-    Limit(10).
-    Execute()
+err = e.GrantWrite(entry.ID, peerID)
+peerID := e.PeerID()
 ```
+
+The public error surface includes:
+
+- `engine.ErrNotFound`
+- `engine.ErrDeleted`
+- `engine.ErrAccessDenied`
+
+### Sync Hooks
+
+The engine exposes low-level sync methods used by the transport layer:
+
+```go
+payload, err := e.GetSyncPayload()
+err = e.ApplyRemotePayload(payload)
+err = e.ApplyRemotePayloadFromPeer(payload, peerID)
+```
+
+These are mainly useful when embedding a custom transport.

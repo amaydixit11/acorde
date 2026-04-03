@@ -1,488 +1,86 @@
-# Complete Feature List for ACORDE
+# Feature Notes
 
-Based on the codebase, here are **all** the features you need to test:
+This document describes the current feature surface in the repository without treating roadmap items as already complete.
 
----
+## Core Data Model
 
-## **1. Core Entry Management**
+- Entries have an ID, type, content, tags, created timestamp, updated timestamp, and deleted tombstone flag.
+- Supported entry types in the public API are `note`, `log`, `file`, and `event`.
+- Data is stored locally in SQLite.
 
-### Create Entries
-- Add entries with types: `note`, `log`, `file`, `event`
-- Attach content (arbitrary bytes)
-- Add multiple tags
-- Auto-generated UUID
-- Lamport timestamp tracking
+## CRDT Replication
 
-### Read Entries
-- Get single entry by ID
-- List all entries
-- Filter by type
-- Filter by tag
-- Filter by date range (Since/Until)
-- Include/exclude deleted entries
-- Pagination (Limit/Offset)
+- Entries replicate as an LWW set.
+- Tags replicate as OR-sets.
+- ACLs replicate with timestamp-based last-write-wins semantics.
+- Sync state is exchanged over libp2p and merged on receipt.
+- Deletions are tombstones and are replicated.
 
-### Update Entries
-- Update content
-- Update tags
-- Tags use OR-Set semantics (concurrent add/remove merges correctly)
-- Timestamps auto-increment
+## Sync Modes
 
-### Delete Entries
-- Soft delete (tombstone)
-- Entry marked as deleted but preserved for CRDT
-- Doesn't appear in default lists
+### LAN Discovery
 
----
+- mDNS-based peer discovery on the local network.
 
-## **2. Encryption**
+### Direct Pairing
 
-### At-Rest Encryption
-- XChaCha20-Poly1305 content encryption
-- Argon2id key derivation from password
-- AAD binding (entry ID tied to ciphertext)
-- Master key storage in `keys.json`
-
-### Per-Entry Encryption (Sharing)
-- X25519 key exchange
-- ECDH shared secret derivation
-- Share specific entries with specific peers
-- Recipients can decrypt without master key
-
----
-
-## **3. CRDT Synchronization**
-
-### Conflict-Free Merging
-- **Entries**: LWW-Set (Last-Write-Wins)
-  - Higher timestamp wins
-  - Tie-breaker: lexicographic comparison
-- **Tags**: OR-Set (Observed-Remove)
-  - Concurrent add/remove operations merge correctly
-  - Each add gets unique token
-- **ACLs**: LWW (timestamp-based)
-
-### Delta Sync
-- `EntriesSince(timestamp)` - only changed entries
-- 10x faster than full state transfer
-
----
-
-## **4. P2P Sync**
-
-### Discovery Methods
-- **mDNS**: Local LAN discovery (zero-config)
-  - Service name: `_acorde._tcp`
-  - Automatic peer finding on same network
-- **DHT**: Global discovery via Kademlia
-  - Uses IPFS bootstrap nodes
-  - Namespace: `/acorde/1.0.0`
-- **Direct Pairing**: QR code / invite URL
-
-### Sync Protocol
-- State hash comparison (SHA-256)
-- Only sync if hashes differ
-- Bidirectional merge
-- Session IDs prevent duplicate syncs
-- Periodic sync every 5 seconds (configurable)
+- `invite` generates a signed pairing payload.
+- `pair` verifies and saves the peer to the allowlist.
+- Daemons proactively reconnect to allowlisted peers.
 
 ### Allowlist
-- Trusted peer management
-- Strict mode (reject unknown peers)
-- Stored in `peers.json`
 
----
+- Known peers are stored locally and can be used even when mDNS is disabled.
 
-## **5. Device Pairing**
+## Access Control
 
-### Invite Generation
-- Creates signed invite with:
-  - Peer ID
-  - Network addresses
-  - Public key
-  - Expiration (24h default)
-  - Signature (ed25519)
-- Optionally includes encryption key
+- New entries are private by default and owned by the creating peer.
+- Owners can grant writer access with `acorde authorize <entry-id> <peer-id>`.
+- Writers can read and update the entry.
+- Unauthorized remote writes are rejected during sync.
+- Private entries can sync into another peer's SQLite store without being visible in `list` or `/entries` until that peer has read access.
 
-### Invite Formats
-- Full: `acorde://BASE64_JSON`
-- Minimal: `acorde://PEERID@ADDRESS`
-- QR Code: PNG or ASCII art
+## Encryption
 
-### Pairing
-- Parse invite
-- Verify signature
-- Add to allowlist (if enabled)
-- Connect and sync
+- `acorde init` creates an encrypted vault.
+- Entry content is encrypted at rest.
+- CLI commands prompt for the vault password when needed.
 
----
+## REST API
 
-## **6. Schema Validation**
+When `daemon` is started with `--api-port`, the API exposes:
 
-### JSON Schema
-- Register schema per entry type
-- Validate content on create/update
-- Enforced automatically
-- Built-in schemas:
-  - Task (title, completed, due_date, priority)
-  - Contact (name, email, phone)
-  - Bookmark (url, title)
-  - Credential (service, username, password)
+- `GET /entries`
+- `POST /entries`
+- `GET /entries/:id`
+- `PUT /entries/:id`
+- `DELETE /entries/:id`
+- `POST /entries/:id/authorize`
+- `GET /status`
+- `GET /events`
 
----
+## Public Go Surface
 
-## **7. Version History**
+The public engine exposes:
 
-### Tracking
-- Every entry change saved as version
-- Includes: content, tags, timestamp, author (peer ID)
-- Configurable max versions per entry
+- entry CRUD
+- `GrantWrite`
+- entry listing with filters
+- event subscriptions
+- sync payload helpers
+- `PeerID`
 
-### Operations
-- `GetHistory(entryID)` - all versions
-- `GetVersion(entryID, versionID)` - specific version
-- `GetVersionAt(entryID, timestamp)` - point-in-time
-- Restore by updating entry with old version content
+Other helper packages exist in the repo, including blob storage, search, sharing, query helpers, version storage, and vault management, but they should be treated as library-level components rather than part of the basic CLI workflow.
 
-### Diff
-- Compare two versions
-- Shows content changes
-- Shows tags added/removed
+## Verified Behavior
 
----
+The current tree has been manually verified for:
 
-## **8. Access Control (ACL)**
-
-### Permissions
-- **Owner**: Full control
-- **Writer**: Read + Write
-- **Reader**: Read only
-- **Public**: Anyone can read
-
-### Operations
-- `CheckRead(entryID, peerID)`
-- `CheckWrite(entryID, peerID)`
-- `GrantRead/Write/Admin`
-- `RevokeRead/Write`
-- `MakePublic/Private`
-- Default ACL: Private, owned by creator
-
----
-
-## **9. Webhooks**
-
-### Event Types
-- `create` - Entry created
-- `update` - Entry updated
-- `delete` - Entry deleted
-- `sync` - Sync completed with peer
-
-### Configuration
-- URL endpoint
-- Event filters
-- Custom headers
-- HMAC signing secret
-- Max retries (default: 3)
-- Timeout (default: 10s)
-- Async/sync mode
-
-### In-Process Callbacks
-- `OnCreate(callback)`
-- `OnUpdate(callback)`
-- `OnDelete(callback)`
-- `OnSync(callback)`
-
----
-
-## **10. Full-Text Search**
-
-### Bleve Integration
-- Pure Go search engine
-- Indexes entry content
-- Standard analyzer for text
-- Keyword analyzer for tags/types
-
-### Search Options
-- Filter by type
-- Filter by tags
-- Result limit
-- Returns entries sorted by relevance score
-
----
-
-## **11. Blob Storage**
-
-### Content-Addressed Storage
-- SHA-256 CID (Content Identifier)
-- Stores in `{dataDir}/blobs/{prefix}/{cid}`
-- Idempotent (same content = same CID)
-
-### Operations
-- `Put(data)` - returns CID
-- `Get(cid)` - retrieves data
-- `Has(cid)` - check existence
-- `Delete(cid)`
-- `List()` - all CIDs
-- `GarbageCollect(referencedCIDs)` - remove unreferenced
-
-### Usage Pattern
-Store file reference in entry:
-```json
-{
-  "name": "photo.jpg",
-  "cid": "a1b2c3d4..."
-}
-```
-
----
-
-## **12. Query Language**
-
-### SQL-Like DSL
-```
-type = "note" AND 
-tags CONTAINS "work" AND 
-created_at > 1700000000 
-ORDER BY updated_at DESC 
-LIMIT 20
-```
-
-### Fluent Builder
-```go
-e.NewQuery().
-  Type(engine.Note).
-  Tag("work").
-  Since(timestamp).
-  Limit(10).
-  Execute()
-```
-
----
-
-## **13. Multi-Vault**
-
-### Vault Manager
-- Separate vaults (Work/Personal)
-- Stored in `{baseDir}/vaults.json`
-- Each vault has own data directory
-
-### Operations
-- `Create(name)` - new vault
-- `List()` - all vaults
-- `Get(idOrName)` - retrieve vault
-- `Delete(idOrName, removeData)` - remove vault
-- `SetActive(idOrName)` - switch active vault
-- `GetActive()` - current vault
-- `Rename(idOrName, newName)`
-
----
-
-## **14. Import/Export**
-
-### Formats
-- **JSON**: Full structured export with metadata
-- **CSV**: Tabular data (id, type, content, tags, timestamps)
-- **Markdown**: Notes with frontmatter
-
-### Export
-- `ExportToJSON(entries, writer)`
-- `ExportToMarkdown(entries, directory)` - one file per note
-- `ExportToCSV(entries, writer)`
-
-### Import
-- `ImportFromJSON(reader)` - returns entries
-- `ImportFromCSV(reader)` - returns entries
-- `ImportFromMarkdown(reader)` - single note
-- Parse frontmatter (id, type, tags)
-
----
-
-## **15. REST API**
-
-### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/entries` | List entries (filters: type, tag, since, until) |
-| `POST` | `/entries` | Create entry |
-| `GET` | `/entries/:id` | Get entry |
-| `PUT` | `/entries/:id` | Update entry |
-| `DELETE` | `/entries/:id` | Delete entry |
-| `GET` | `/status` | Server status (peer count, sync stats) |
-| `GET` | `/events` | SSE stream (real-time events) |
-
-### Server-Sent Events
-- Real-time change notifications
-- Event types: created, updated, deleted, synced
-- JSON payload with entry ID, type, timestamp
-
----
-
-## **16. CLI Commands**
-
-### Daemon
-```bash
-acorde daemon --port 4001 --api-port 7331
-```
-Runs P2P sync + REST API in unified mode
-
-### Initialization
-```bash
-acorde init              # Create vault
-acorde init --encrypt    # With encryption
-```
-
-### Entry Operations
-```bash
-acorde add --type note --content "Hello" --tags work,urgent
-acorde list
-acorde get <ID>
-acorde update <ID> --content "New"
-acorde delete <ID>
-```
-
-### Pairing
-```bash
-acorde invite --share-key    # Generate invite + QR
-acorde pair "acorde://..."   # Accept invite
-```
-
-### Search
-```bash
-acorde search "keyword"
-```
-
-### Sync Status
-```bash
-acorde status    # Show peers, sync stats
-```
-
----
-
-## **17. Events & Subscriptions**
-
-### Event Types
-- `created` - Entry added
-- `updated` - Entry modified
-- `deleted` - Entry removed
-- `synced` - Remote sync applied
-
-### Subscription Options
-- Filter by event types
-- Filter by entry type
-- Buffered channel (100 events)
-- Close to unsubscribe
-
----
-
-## **18. Docker Support**
-
-### Docker Compose
-```bash
-docker-compose up -d
-```
-- Runs daemon mode
-- Ports: 4001 (P2P), 7331 (API)
-- Volume: `./data` persists to host
-- Healthcheck via `/status`
-
-### Dockerfile
-- Multi-stage build
-- Alpine-based (~20MB)
-- Non-root user
-- SQLite + CA certs included
-
----
-
-## **19. Clock Recovery**
-
-### Lamport Clock
-- Monotonically increasing logical timestamps
-- Survives restarts
-- `GetMaxTimestamp()` from storage on startup
-- Clock initialized to max(stored timestamps) + 1
-
----
-
-## **20. Testing Features**
-
-### Property Tests (Fuzzing)
-- Commutativity: A ⊔ B = B ⊔ A
-- Associativity: (A ⊔ B) ⊔ C = A ⊔ (B ⊔ C)
-- Idempotence: A ⊔ A = A
-- Convergence: All replicas reach identical state
-
-### Unit Tests
-- CRDT operations (LWW, OR-Set)
-- Storage (SQLite)
-- Sync protocol
-- Encryption/decryption
-- Clock operations
-- Invite creation/parsing
-
----
-
-## **21. Configuration**
-
-### Sync Config
-```go
-Config{
-    ListenAddrs: []string{"/ip4/0.0.0.0/tcp/4001"},
-    SyncInterval: 5 * time.Second,
-    EnableMDNS: true,
-    EnableDHT: false,
-    AllowlistPath: "",
-    StrictAllowlist: false,
-}
-```
-
-### Engine Config
-```go
-Config{
-    DataDir: "./data",
-    InMemory: false,
-    EncryptionKey: &key,
-    MaxVersions: 50,
-}
-```
-
----
-
-## **Testing Checklist**
-
-Start with these test scenarios:
-
-### Basic Operations
-- [ ] Create entry → verify stored
-- [ ] Read entry → verify content
-- [ ] Update entry → verify changes
-- [ ] Delete entry → verify tombstone
-- [ ] List entries with filters
-
-### Sync
-- [ ] Two nodes on same network (mDNS)
-- [ ] Create entry on Node A → appears on Node B
-- [ ] Concurrent updates → both merge correctly
-- [ ] Offline edits → sync when reconnected
-
-### Encryption
-- [ ] Create vault with password
-- [ ] Content encrypted at rest
-- [ ] Decrypt on retrieval
-
-### Pairing
-- [ ] Generate invite with QR
-- [ ] Pair second device
-- [ ] Sync after pairing
-
-### Advanced
-- [ ] Schema validation (reject invalid)
-- [ ] Version history (restore old)
-- [ ] ACL (deny unauthorized peer)
-- [ ] Webhooks (receive HTTP callback)
-- [ ] Search (find by keyword)
-- [ ] Import/Export (JSON/CSV/Markdown)
-
----
-
-This is **everything** in ACORDE. Start testing from the top down!
+- single-node CRUD
+- two-node mDNS sync
+- unauthorized write rejection
+- authorize then remote update
+- delete propagation
+- direct pairing without mDNS
+- encrypted local vault usage
+- three-node convergence

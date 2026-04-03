@@ -1,298 +1,171 @@
 # ACORDE
 
-**ACORDE** (Always-Available Conflict-free Offline-first Replicated Distributed Data Synchronization Engine) is a **local-first**, **peer-to-peer** data synchronization engine built with Go. It enables applications to store data durably offline and sync it securely across devices without a central server.
+ACORDE is a local-first data engine with SQLite storage, CRDT-based replication, optional vault encryption, and peer-to-peer sync over libp2p.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg?logo=go)
-![Status](https://img.shields.io/badge/status-beta-orange.svg)
+## What It Does
 
-## ✨ Features
+- Stores entries locally in SQLite and works offline.
+- Syncs entries between peers over LAN discovery or direct pairing.
+- Uses CRDTs to merge replicated state.
+- Encrypts vault contents at rest when initialized with `acorde init`.
+- Enforces per-entry ownership and writer permissions.
+- Exposes both a Go API and a REST API.
 
-### Core
-- **Local-First**: Built on SQLite. Works completely offline.
-- **Conflict-Free**: Uses State-based CRDTs (LWW-Set for entries, OR-Set for tags) to merge data automatically.
-- **End-to-End Encryption**: XChaCha20-Poly1305 content encryption with Argon2id key derivation.
-
-### Advanced (New in v0.8)
-- **Schema Validation**: Define JSON schemas for entry types. Enforced automatically.
-- **Versioning**: Full history tracking. Undo changes or audit usage.
-- **Access Control**: Owner/Reader/Writer permissions per entry.
-- **Multi-Vault**: Manage separate vaults (Work/Personal) in one daemon.
-- **Webhooks**: Register HTTP callbacks for real-time events.
-- **Import/Export**: Migrate data using JSON, CSV, or Markdown formats.
-
-### Sync
-- **mDNS**: Automatic discovery on local LAN.
-- **DHT**: Global discovery via Kademlia DHT (optional).
-- **Delta Sync**: Only sync entries that changed since last sync (10x faster).
-- **Direct Pairing**: QR-code based pairing for trusted devices.
-
-### API
-- **Go Library**: Embed `pkg/engine` in your application.
-- **REST API**: `acorde serve --port 7331` for any language.
-- **Event Subscriptions**: Real-time change notifications via SSE.
-- **Query Language**: Filter entries with `type = "note" AND tags CONTAINS "work"`.
-- **Full-Text Search**: Search content with Bleve (pure Go).
-
-### Storage
-- **Per-Entry Encryption**: Share specific entries with specific peers.
-- **Blob Storage**: Content-addressed storage for large files (images, PDFs).
-## 📦 Installation
-
-> [!TIP]
-> **New!** Check out the [Setup Guide](docs/setup.md) for Docker, Windows, and detailed build instructions.
+## Install
 
 ```bash
-
-# Install CLI
 go install github.com/amaydixit11/acorde/cmd/acorde@latest
+```
 
-# Or build from source
+Or from source:
+
+```bash
 git clone https://github.com/amaydixit11/acorde.git
-cd acorde/cmd/acorde
-go build -o acorde .
+cd acorde
+go build -o acorde ./cmd/acorde
 ```
 
-## 🚀 Quick Start
-
-### Quick Start (Unified Mode)
-
-The best way to run ACORDE is to use the `daemon` command with the `--api-port` flag. This runs both the P2P sync engine and the REST API in a single process, ensuring real-time consistency.
+## Core Commands
 
 ```bash
-# Start Daemon + API
-acorde daemon --port 4001 --api-port 7331
-
-# Now you can use the API
-curl http://localhost:7331/entries
-curl -X POST http://localhost:7331/entries -d '{"type":"note","content":"Hello"}'
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
+acorde add --data /tmp/acorde-a --type note --content "hello"
+acorde list --data /tmp/acorde-a
+acorde get --data /tmp/acorde-a <entry-id>
+acorde update --data /tmp/acorde-a <entry-id> --content "updated"
+acorde delete --data /tmp/acorde-a <entry-id>
+acorde authorize --data /tmp/acorde-a <entry-id> <peer-id>
 ```
 
-Nodes paired with this daemon will receive "Hello" instantly.
+## Recommended Run Mode
 
-### CLI Only
+Run `daemon` when you want sync and the REST API in the same long-lived process:
+
 ```bash
-acorde init
-acorde add --type note --content "Hello World"
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
 ```
 
-### Library Mode
+This starts:
 
-### Library Mode
+- the local engine
+- the libp2p sync service
+- the REST API on `http://localhost:7331`
 
-```go
-package main
+## Quick Start
 
-import (
-    "log"
-    "github.com/amaydixit11/acorde/pkg/engine"
-    "github.com/amaydixit11/acorde/pkg/crypto"
-)
+### Single Node
 
-func main() {
-    // Initialize with encryption
-    key, _ := crypto.GenerateKey()
-    e, _ := engine.New(engine.Config{
-        DataDir:       "./data",
-        EncryptionKey: &key,
-        MaxVersions:   50, // Keep last 50 versions
-    })
-    defer e.Close()
-
-    // 1. Register Schema (Optional)
-    e.RegisterSchema("task", []byte(`{
-        "type": "object", 
-        "required": ["title"], 
-        "properties": {"title": {"type": "string"}}
-    }`))
-
-    // 2. Add entry (Validates schema + Sets Owner + Saves Version 1)
-    entry, _ := e.AddEntry(engine.AddEntryInput{
-        Type:    "task",
-        Content: []byte(`{"title": "Buy milk"}`),
-        Tags:    []string{"personal"},
-    })
-    log.Printf("Created: %s", entry.ID)
-
-    // 3. Update entry (Checks ACL + Validates + Saves Version 2)
-    newContent := []byte(`{"title": "Buy almond milk"}`)
-    e.UpdateEntry(entry.ID, engine.UpdateEntryInput{
-        Content: &newContent,
-    })
-
-    // 4. Inspect History
-    history, _ := e.Versions().GetHistory(entry.ID)
-    log.Printf("Versions: %d", len(history)) // 2
-
-    // 5. Query entries
-    results, _ := e.Query(`type = "task" AND tags CONTAINS "personal" LIMIT 10`)
-    
-    // 6. Search content
-    found, _ := e.Search("milk", engine.SearchOptions{Limit: 20})
-    
-    // 7. Subscribe to changes
-    sub := e.Subscribe()
-    go func() {
-        for event := range sub.Events() {
-            log.Printf("Event: %s %s", event.Type, event.EntryID)
-        }
-    }()
-}
+```bash
+acorde daemon --data /tmp/acorde-main --port 4101 --api-port 7401
 ```
 
-## 📡 REST API Endpoints
+In another terminal:
+
+```bash
+acorde add --data /tmp/acorde-main --type note --content "hello"
+acorde list --data /tmp/acorde-main
+acorde get --data /tmp/acorde-main <entry-id>
+```
+
+### Two-Node Sync
+
+Terminal 1:
+
+```bash
+acorde daemon --data /tmp/acorde-a --port 4001 --api-port 7331
+```
+
+Terminal 2:
+
+```bash
+acorde daemon --data /tmp/acorde-b --port 4002 --api-port 7332
+```
+
+Terminal 3:
+
+```bash
+acorde add --data /tmp/acorde-a --type note --content "hello from A"
+sqlite3 /tmp/acorde-b/acorde.db 'select id,type,updated_at,deleted from entries order by id;'
+```
+
+Grant B write access to A's entry:
+
+```bash
+cat /tmp/acorde-b/node_id
+acorde authorize --data /tmp/acorde-a <entry-id> <peer-id-from-b>
+```
+
+Then update from B:
+
+```bash
+acorde update --data /tmp/acorde-b <entry-id> --content "updated from B"
+```
+
+### Direct Pairing
+
+Device A:
+
+```bash
+acorde daemon --data /tmp/acorde-pair-a --port 4021 --api-port 7351 --mdns=false
+acorde invite --data /tmp/acorde-pair-a
+```
+
+Device B:
+
+```bash
+acorde pair --data /tmp/acorde-pair-b 'acorde://...'
+acorde daemon --data /tmp/acorde-pair-b --port 4022 --api-port 7352 --mdns=false
+```
+
+Notes:
+
+- `pair` stores the peer in the allowlist.
+- If the peer is not reachable immediately, pairing can still succeed locally and syncing starts once the daemon runs.
+- When a daemon is already running, `invite` prefers the daemon's live addresses.
+
+### Encrypted Vault
+
+```bash
+acorde init --data /tmp/acorde-enc-a
+acorde add --data /tmp/acorde-enc-a --type note --content "secret"
+acorde list --data /tmp/acorde-enc-a
+acorde get --data /tmp/acorde-enc-a <entry-id>
+```
+
+## REST API
+
+When `daemon` is started with `--api-port`, these endpoints are available:
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/entries` | List entries (with `?type=` and `?tag=` filters) |
-| POST | `/entries` | Create entry |
-| GET | `/entries/:id` | Get entry by ID |
-| PUT | `/entries/:id` | Update entry |
-| DELETE | `/entries/:id` | Delete entry |
-| GET | `/status` | Vault status |
-| GET | `/events` | Server-Sent Events stream |
+| --- | --- | --- |
+| `GET` | `/entries` | List readable entries |
+| `POST` | `/entries` | Create an entry |
+| `GET` | `/entries/:id` | Get one entry |
+| `PUT` | `/entries/:id` | Update an entry |
+| `DELETE` | `/entries/:id` | Tombstone an entry |
+| `POST` | `/entries/:id/authorize` | Grant write access to a peer |
+| `GET` | `/status` | Basic server status |
+| `GET` | `/events` | Server-sent event stream |
 
-## 🔍 Query Language
+Example:
 
-```go
-// String DSL
-results, _ := e.Query(`
-    type = "note" AND 
-    tags CONTAINS "work" AND 
-    created_at > 1700000000
-    LIMIT 20
-`)
-
-// Fluent Builder
-entries, _ := e.NewQuery().
-    Type(engine.Note).
-    Tag("work").
-    Since(timestamp).
-    Limit(10).
-    Execute()
-```
-
-## 📦 Blob Storage
-
-Store large files without bloating SQLite:
-
-```go
-// Create blob store
-blobs, _ := engine.NewBlobStore("./data")
-
-// Store image (returns content-addressed ID)
-cid, _ := blobs.StoreBlob(imageBytes)
-// cid = "a1b2c3d4..."
-
-// Reference in entry metadata
-entry, _ := e.AddEntry(engine.AddEntryInput{
-    Type:    engine.File,
-    Content: []byte(`{"name":"photo.jpg","cid":"` + string(cid) + `"}`),
-})
-
-// Retrieve later
-data, _ := blobs.GetBlob(cid)
-```
-
-## 🔐 Encryption
-
-### Vault Encryption
-All content is encrypted at rest using **XChaCha20-Poly1305**. The master key is protected with **Argon2id**.
-
-### Per-Entry Encryption
-Share specific entries with specific peers:
-
-```go
-// Create sharing manager
-mgr, _ := engine.NewSharingManager(masterKey)
-
-// Share entry with Alice and Bob
-shares, _ := mgr.ShareEntry(entryID, []engine.PeerID{aliceID, bobID})
-
-// Alice recovers the key
-key, _ := sharing.RecoverSharedKey(share, entryID, alicePrivate, senderPublic)
-```
-
-## 🤝 Device Pairing
-
-**Device A:**
 ```bash
-acorde invite --share-key
-# Shows QR code + invite URL
+curl -s http://localhost:7331/entries
+curl -s -X POST http://localhost:7331/entries \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"note","content":"hello","tags":["demo"]}'
 ```
 
-**Device B:**
-```bash
-acorde pair "acorde://..."
-# Imports encryption key
-```
+## Behavior Notes
 
-## 🏗️ Architecture
+- Synced private entries may exist in a peer's SQLite DB but remain hidden from `list`, `get`, and `/entries` until that peer has read access.
+- `authorize` grants write access. Writers can also read the entry.
+- CLI writes made against the same vault while a daemon is already running are picked up by the daemon and synced.
+- Deletions are tombstones and replicate across peers.
 
-```mermaid
-graph TD
-    User[User / App] --> API[pkg/engine]
-    User --> REST[REST API :7331]
-    
-    subgraph Engine
-        API --> CRDT[CRDT Replica]
-        API --> Store[SQLite]
-        API --> Crypto[Encryption]
-        API --> Events[Event Bus]
-        API --> Search[Bleve FTS]
-        API --> Blobs[Blob Store]
-        API --> Schema[JSON Schema]
-        API --> ACL[Access Control]
-        API --> Version[Version History]
-    end
-    
-    subgraph Sync
-        CRDT <--> P2P[libp2p]
-        P2P <--> mDNS[LAN Discovery]
-        P2P <--> DHT[Global DHT]
-    end
-```
+## Project Docs
 
-## 📂 Project Structure
-
-```
-acorde/
-├── cmd/acorde/          # CLI application
-├── pkg/
-│   ├── engine/          # Public API (Engine, Query, Search, Blob, Sharing)
-│   ├── api/             # REST API server
-│   └── crypto/          # Encryption utilities
-├── internal/
-│   ├── crdt/            # LWW-Set, OR-Set, Delta Sync
-│   ├── engine/          # Engine implementation
-│   ├── storage/         # SQLite storage
-│   ├── sync/            # P2P sync (libp2p)
-│   ├── search/          # Bleve full-text search
-│   ├── sharing/         # Per-entry encryption
-│   ├── blob/            # Content-addressed storage
-│   ├── schema/          # JSON Schema validation
-│   ├── version/         # History tracking
-│   ├── acl/             # Access control
-│   └── hooks/           # Webhooks
-├── examples/
-│   ├── notes-cli/       # Go CLI example
-│   └── notes-web/       # HTML/JS web example
-└── docs/                # Architecture docs
-```
-
-## 🗺️ Roadmap
-
-- [x] Goal 1: Local Engine (SQLite + CRDT)
-- [x] Goal 2: Core Replication Logic
-- [x] Goal 3: P2P Sync & Discovery
-- [x] Goal 4: End-to-End Encryption
-- [x] Goal 5: REST API & Event Hooks
-- [x] Goal 6: Query Language & Search
-- [x] Goal 7: Blob Storage & Per-Entry Encryption
-- [x] Goal 8: Schema Validation, Versioning, ACLs, Webhooks & Import/Export
-- [ ] Goal 9: Mobile SDKs (iOS, Android)
-- [ ] Goal 10: Web Assembly Build
-
-## 📄 License
-
-MIT
+- [Setup Guide](docs/setup.md)
+- [API Reference](docs/API.md)
+- [Feature Notes](docs/FEATURES.md)
+- [Developer Guide](docs/DEVELOPER_GUIDE.md)
