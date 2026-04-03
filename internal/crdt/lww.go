@@ -7,6 +7,8 @@
 package crdt
 
 import (
+	"sort"
+
 	"github.com/amaydixit11/acorde/internal/core"
 	"github.com/google/uuid"
 )
@@ -33,14 +35,58 @@ func NewLWWSet() *LWWSet {
 	}
 }
 
+// shouldUpdateEntry determines if new should replace existing (deterministic tie-breaker)
+func shouldUpdateEntry(existing LWWElement, new core.Entry) bool {
+	if new.UpdatedAt > existing.Timestamp {
+		return true
+	}
+	if new.UpdatedAt < existing.Timestamp {
+		return false
+	}
+
+	// Timestamps equal, use deterministic tie-breakers:
+	// 1. Deleted wins over not deleted
+	if new.Deleted && !existing.Deleted {
+		return true
+	}
+	if !new.Deleted && existing.Deleted {
+		return false
+	}
+
+	// 2. Higher CreatedAt wins
+	if new.CreatedAt > existing.Entry.CreatedAt {
+		return true
+	}
+	if new.CreatedAt < existing.Entry.CreatedAt {
+		return false
+	}
+
+	// 3. Higher Type (string) wins
+	if string(new.Type) > string(existing.Entry.Type) {
+		return true
+	}
+	if string(new.Type) < string(existing.Entry.Type) {
+		return false
+	}
+
+	// 4. Higher Content wins
+	cmp := compareBytes(new.Content, existing.Entry.Content)
+	if cmp > 0 {
+		return true
+	}
+	if cmp < 0 {
+		return false
+	}
+
+	// 5. Higher Tags win
+	return compareTags(new.Tags, existing.Entry.Tags) > 0
+}
+
 // Add adds or updates an entry in the set.
-// If an entry with the same ID exists with a higher timestamp, this is a no-op.
 func (s *LWWSet) Add(entry core.Entry) {
 	existing, exists := s.elements[entry.ID]
 
-	// Only update if new timestamp is higher, or equal timestamp with higher ID (tie-breaker)
-	if !exists || entry.UpdatedAt > existing.Timestamp ||
-		(entry.UpdatedAt == existing.Timestamp && entry.ID.String() > existing.Entry.ID.String()) {
+	if !exists || shouldUpdateEntry(existing, entry) {
 		s.elements[entry.ID] = LWWElement{
 			Entry:     entry.Clone(),
 			Timestamp: entry.UpdatedAt,
@@ -110,75 +156,27 @@ func (s *LWWSet) AllElements() []LWWElement {
 	for _, elem := range s.elements {
 		result = append(result, elem)
 	}
+
+	// Sort for deterministic serialization
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Entry.ID.String() < result[j].Entry.ID.String()
+	})
 	return result
 }
 
 // Merge merges another LWW-Set into this one.
-// For each element, the one with the highest timestamp wins.
-// This operation is:
-// - Commutative: A.Merge(B) = B.Merge(A)
-// - Associative: (A.Merge(B)).Merge(C) = A.Merge(B.Merge(C))
-// - Idempotent: A.Merge(A) = A
+// This operation is commutative, associative, and idempotent.
 func (s *LWWSet) Merge(other *LWWSet) {
 	for id, otherElem := range other.elements {
 		existing, exists := s.elements[id]
 
-		if !exists {
-			// New element, just add it
+		if !exists || shouldUpdateEntry(existing, otherElem.Entry) {
 			s.elements[id] = LWWElement{
 				Entry:     otherElem.Entry.Clone(),
 				Timestamp: otherElem.Timestamp,
 				Deleted:   otherElem.Deleted,
 			}
-			continue
 		}
-
-		// Compare timestamps - highest wins
-		if otherElem.Timestamp > existing.Timestamp {
-			s.elements[id] = LWWElement{
-				Entry:     otherElem.Entry.Clone(),
-				Timestamp: otherElem.Timestamp,
-				Deleted:   otherElem.Deleted,
-			}
-		} else if otherElem.Timestamp == existing.Timestamp {
-			// Tie-breaker: deleted wins, then higher ID wins
-			if otherElem.Deleted && !existing.Deleted {
-				s.elements[id] = LWWElement{
-					Entry:     otherElem.Entry.Clone(),
-					Timestamp: otherElem.Timestamp,
-					Deleted:   otherElem.Deleted,
-				}
-			} else if !otherElem.Deleted && !existing.Deleted {
-				// Both not deleted. Timestamps are equal. Entry ID is equal.
-				// We MUST have a deterministic tie-breaker based on CONTENT.
-				// If we don't, A keeps A, B keeps B -> Divergence.
-				
-				// Compare Content bytes
-				cmp := compareBytes(otherElem.Entry.Content, existing.Entry.Content)
-				if cmp > 0 {
-					// Other content "greater", so replace
-					s.elements[id] = LWWElement{
-						Entry:     otherElem.Entry.Clone(),
-						Timestamp: otherElem.Timestamp,
-						Deleted:   otherElem.Deleted,
-					}
-				} else if cmp == 0 {
-					// Content is same. Compare tags?
-					// Tags are handled by OR-Set, but Entry struct has them too.
-					// Let's assume Entry.Tags in LWW is secondary to OR-Set, but needed for equality.
-					// Compare tags as string.
-					tagCmp := compareTags(otherElem.Entry.Tags, existing.Entry.Tags)
-					if tagCmp > 0 {
-						s.elements[id] = LWWElement{
-							Entry:     otherElem.Entry.Clone(),
-							Timestamp: otherElem.Timestamp,
-							Deleted:   otherElem.Deleted,
-						}
-					}
-				}
-			}
-		}
-		// If existing.Timestamp > otherElem.Timestamp, keep existing (no-op)
 	}
 }
 

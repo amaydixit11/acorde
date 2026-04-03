@@ -1,6 +1,8 @@
 package crdt
 
 import (
+	"sort"
+
 	"github.com/google/uuid"
 )
 
@@ -77,6 +79,9 @@ func (s *ORSet) Elements() []string {
 	for tag := range seen {
 		result = append(result, tag)
 	}
+
+	// Sort tags for deterministic comparison
+	sort.Strings(result)
 	return result
 }
 
@@ -118,6 +123,14 @@ func (s *ORSet) AllAdds() []TagToken {
 	for tt := range s.adds {
 		result = append(result, tt)
 	}
+
+	// Sort for deterministic serialization
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Tag != result[j].Tag {
+			return result[i].Tag < result[j].Tag
+		}
+		return result[i].Token.String() < result[j].Token.String()
+	})
 	return result
 }
 
@@ -127,6 +140,14 @@ func (s *ORSet) AllRemoves() []TagToken {
 	for tt := range s.removes {
 		result = append(result, tt)
 	}
+
+	// Sort for deterministic serialization
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Tag != result[j].Tag {
+			return result[i].Tag < result[j].Tag
+		}
+		return result[i].Token.String() < result[j].Token.String()
+	})
 	return result
 }
 
@@ -138,4 +159,3 @@ func (s *ORSet) RemoveToken(token uuid.UUID) {
 		}
 	}
 }
-

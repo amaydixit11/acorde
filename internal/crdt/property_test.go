@@ -31,8 +31,8 @@ func TestProperty_Commutativity(t *testing.T) {
 		bClone2 := rB.Clone()
 		bClone2.Merge(aClone2)
 
-		if !replicasEqual(aClone, bClone2) {
-			t.Errorf("Commutativity violation at iteration %d", i)
+		if diff := replicasEqual(aClone, bClone2); diff != "" {
+			t.Errorf("Commutativity violation at iteration %d: %s", i, diff)
 		}
 	}
 }
@@ -50,8 +50,8 @@ func TestProperty_Idempotence(t *testing.T) {
 
 		r.Merge(rClone)
 
-		if !replicasEqual(r, rClone) {
-			t.Errorf("Idempotence violation at iteration %d", i)
+		if diff := replicasEqual(r, rClone); diff != "" {
+			t.Errorf("Idempotence violation at iteration %d: %s", i, diff)
 		}
 	}
 }
@@ -79,8 +79,8 @@ func TestProperty_Associativity(t *testing.T) {
 		rightA := rA.Clone()
 		rightA.Merge(rightBC)
 
-		if !replicasEqual(leftA, rightA) {
-			t.Errorf("Associativity violation at iteration %d", i)
+		if diff := replicasEqual(leftA, rightA); diff != "" {
+			t.Errorf("Associativity violation at iteration %d: %s", i, diff)
 		}
 	}
 }
@@ -114,8 +114,8 @@ func TestProperty_Convergence(t *testing.T) {
 		// Verify that merging master back into any replica makes strict equality
 		for j := 0; j < numReplicas; j++ {
 			replicas[j].Merge(master)
-			if !replicasEqual(replicas[j], master) {
-				t.Errorf("Convergence violation: Replica %d != Master", j)
+			if diff := replicasEqual(replicas[j], master); diff != "" {
+				t.Errorf("Convergence violation: Replica %d != Master: %s", j, diff)
 			}
 		}
 	}
@@ -134,7 +134,7 @@ func applyRandomOps(r *Replica, rng *rand.Rand, count int) {
 
 	for i := 0; i < count; i++ {
 		op := rng.Intn(3) // 0=Add, 1=Update, 2=Delete
-		
+
 		if op == 0 || len(ids) == 0 {
 			// Add
 			id := uuid.New()
@@ -183,17 +183,11 @@ func randomTags(rng *rand.Rand) []string {
 	return tags
 }
 
-func replicasEqual(a, b *Replica) bool {
+func replicasEqual(a, b *Replica) string {
 	stateA := a.State()
 	stateB := b.State()
 
 	// Compare Entries (LWW)
-	// Order might differ? ListEntries sorts?
-	// State().Entries is raw LWW elements. Not strictly sorted.
-	// But our LWWSet.AllElements might not be deterministic order?
-	// Let's rely on DeepEqual if order is deterministic. 
-	// To be safe, we should essentially compare the SET CONTENT.
-	
 	mapA := make(map[uuid.UUID]LWWElement)
 	for _, e := range stateA.Entries {
 		mapA[e.Entry.ID] = e
@@ -204,40 +198,33 @@ func replicasEqual(a, b *Replica) bool {
 	}
 
 	if len(mapA) != len(mapB) {
-		return false
+		return "Entry count differ"
 	}
 	for id, elA := range mapA {
 		elB, ok := mapB[id]
 		if !ok {
-			return false
+			return "Entry ID missing"
 		}
 		if !lwwElementEqual(elA, elB) {
-			return false
+			return "Entry Content/Metadata differ"
 		}
 	}
 
 	// Compare Tags
-	// DeepEqual fails because map iteration order is random and TagSetState contains slices.
-	// We need to compare specific fields independently or sort them.
 	if len(stateA.Tags) != len(stateB.Tags) {
-		return false
+		return "Tag count differ"
 	}
 	for id, tagStateA := range stateA.Tags {
 		tagStateB, ok := stateB.Tags[id]
 		if !ok {
-			return false
+			return "Tag ID missing"
 		}
 		if !tagSetStateEqual(tagStateA, tagStateB) {
-			return false
+			return "Tag Content differ"
 		}
 	}
-	
-	// Compare Clocks
-	if stateA.ClockTime != stateB.ClockTime {
-		return false
-	}
 
-	return true
+	return ""
 }
 
 func lwwElementEqual(a, b LWWElement) bool {

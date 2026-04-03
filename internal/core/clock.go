@@ -32,15 +32,16 @@ func (c *Clock) Tick() uint64 {
 }
 
 // Update merges with a remote timestamp
-// Sets local time to max(local, remote) + 1
+// Sets local time to max(local, remote) + 1 to model a Lamport receive event.
 // Must be called when receiving remote state
 func (c *Clock) Update(remoteTime uint64) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if remoteTime > c.time {
-		c.time = remoteTime
+	if remoteTime >= c.time {
+		c.time = remoteTime + 1
+	} else {
+		c.time++
 	}
-	c.time++
 	return c.time
 }
 
