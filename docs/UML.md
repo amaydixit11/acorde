@@ -8,110 +8,100 @@ The following diagram shows the main components of the Acorde system and their r
 
 ```mermaid
 classDiagram
-    namespace PublicAPI {
-        class Engine {
-            <<interface>>
-            +AddEntry(input) Entry
-            +GetEntry(id) Entry
-            +UpdateEntry(id, input)
-            +DeleteEntry(id)
-            +GrantWrite(id, peerID)
-            +ListEntries(filter) []Entry
-            +Search(query, opts) SearchResult
-            +GetSyncPayload() []byte
-            +ApplyRemotePayload(payload)
-            +Subscribe() Subscription
-            +PeerID() string
-            +Close()
-        }
-        class engineWrapper {
-            -impl internal.Engine
-        }
+    class Engine {
+        <<interface>>
+        +AddEntry(input) Entry
+        +GetEntry(id) Entry
+        +UpdateEntry(id, input)
+        +DeleteEntry(id)
+        +GrantWrite(id, peerID)
+        +ListEntries(filter) []Entry
+        +Search(query, opts) SearchResult
+        +GetSyncPayload() []byte
+        +ApplyRemotePayload(payload)
+        +Subscribe() Subscription
+        +PeerID() string
+        +Close()
+    }
+    class engineWrapper {
+        -impl internal.Engine
     }
 
-    namespace InternalEngine {
-        class InternalEngine {
-            <<interface>>
-            +AddEntry(input) Entry
-            +GetEntry(id) Entry
-            +UpdateEntry(id, input)
-            +DeleteEntry(id)
-            +ListEntries(filter) []Entry
-            +ApplySyncState(state, peerID)
-            +Subscribe() Subscription
-            +ACL() *acl.Store
-            +Versions() *version.Store
-        }
-        class engineImpl {
-            -mu sync.Mutex
-            -replica *crdt.Replica
-            -store storage.Store
-            -events *EventBus
-            -schemas *schema.Registry
-            -versions *version.Store
-            -acls *acl.Store
-            -hooks *hooks.Manager
-            -localID string
-        }
+    class InternalEngineInterface {
+        <<interface>>
+        +AddEntry(input) Entry
+        +GetEntry(id) Entry
+        +UpdateEntry(id, input)
+        +DeleteEntry(id)
+        +ListEntries(filter) []Entry
+        +ApplySyncState(state, peerID)
+        +Subscribe() Subscription
+        +ACL() *acl.Store
+        +Versions() *version.Store
+    }
+    class engineImpl {
+        -mu sync.Mutex
+        -replica *crdt.Replica
+        -store storage.Store
+        -events *EventBus
+        -schemas *schema.Registry
+        -versions *version.Store
+        -acls *acl.Store
+        -hooks *hooks.Manager
+        -localID string
     }
 
-    namespace CRDT {
-        class Replica {
-            -mu sync.RWMutex
-            -clock *core.Clock
-            -entries map[uuid.UUID]LWWElement
-            -tags map[uuid.UUID]*TagSet
-            -acls map[uuid.UUID]core.ACL
-            +AddEntry(type, content, tags) core.Entry
-            +UpdateEntry(id, content, tags)
-            +DeleteEntry(id)
-            +Merge(other *Replica)
-            +State() ReplicaState
-        }
+    class Replica {
+        -mu sync.RWMutex
+        -clock *core.Clock
+        -entries map[uuid.UUID]LWWElement
+        -tags map[uuid.UUID]*TagSet
+        -acls map[uuid.UUID]core.ACL
+        +AddEntry(type, content, tags) core.Entry
+        +UpdateEntry(id, content, tags)
+        +DeleteEntry(id)
+        +Merge(other *Replica)
+        +State() ReplicaState
     }
 
-    namespace Storage {
-        class Store {
-            <<interface>>
-            +Put(entry)
-            +Get(id) Entry
-            +List(filter) []Entry
-            +Delete(id)
-            +Close()
-        }
-        class SQLiteStore {
-            -db *sql.DB
-        }
+    class Store {
+        <<interface>>
+        +Put(entry)
+        +Get(id) Entry
+        +List(filter) []Entry
+        +Delete(id)
+        +Close()
+    }
+    class SQLiteStore {
+        -db *sql.DB
     }
 
-    namespace Sync {
-        class SyncService {
-            <<interface>>
-            +Start(ctx)
-            +Stop()
-            +SyncWith(ctx, peerID)
-            +ConnectPeer(invite)
-        }
-        class p2pService {
-            -host libp2p.Host
-            -provider StateProvider
-            -allowlist *Allowlist
-            -mdnsService mdns.Service
-            -dhtDiscovery *DHTDiscovery
-            +handleStream(stream)
-            +syncLoop()
-        }
-        class StateProvider {
-            <<interface>>
-            +StateHash() []byte
-            +GetState() ReplicaState
-            +ApplyState(state, peerID)
-        }
+    class SyncService {
+        <<interface>>
+        +Start(ctx)
+        +Stop()
+        +SyncWith(ctx, peerID)
+        +ConnectPeer(invite)
+    }
+    class p2pService {
+        -host libp2p.Host
+        -provider StateProvider
+        -allowlist *Allowlist
+        -mdnsService mdns.Service
+        -dhtDiscovery *DHTDiscovery
+        +handleStream(stream)
+        +syncLoop()
+    }
+    class StateProvider {
+        <<interface>>
+        +StateHash() []byte
+        +GetState() ReplicaState
+        +ApplyState(state, peerID)
     }
 
     Engine <|.. engineWrapper
-    InternalEngine <|.. engineImpl
-    engineWrapper --> InternalEngine : wraps
+    InternalEngineInterface <|.. engineImpl
+    engineWrapper --> InternalEngineInterface : wraps
     engineImpl --> Replica : manages state
     engineImpl --> Store : persists views
     engineImpl --> StateProvider : implements
@@ -228,5 +218,5 @@ graph TD
     IE --> P2P
     P2P --> MDNS
     P2P --> DHT
-    P2P <--> REP : State Exchange
+    P2P <--> |State Exchange| REP
 ```
