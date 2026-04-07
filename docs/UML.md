@@ -10,70 +10,70 @@ The following diagram shows the main components of the Acorde system and their r
 classDiagram
     class Engine {
         <<interface>>
-        +AddEntry(input) Entry
-        +GetEntry(id) Entry
+        +AddEntry(input)
+        +GetEntry(id)
         +UpdateEntry(id, input)
         +DeleteEntry(id)
         +GrantWrite(id, peerID)
-        +ListEntries(filter) []Entry
-        +Search(query, opts) SearchResult
-        +GetSyncPayload() []byte
+        +ListEntries(filter)
+        +Search(query, opts)
+        +GetSyncPayload()
         +ApplyRemotePayload(payload)
-        +Subscribe() Subscription
-        +PeerID() string
+        +Subscribe()
+        +PeerID()
         +Close()
     }
     class engineWrapper {
-        -impl internal.Engine
+        -impl
     }
 
     class InternalEngineInterface {
         <<interface>>
-        +AddEntry(input) Entry
-        +GetEntry(id) Entry
+        +AddEntry(input)
+        +GetEntry(id)
         +UpdateEntry(id, input)
         +DeleteEntry(id)
-        +ListEntries(filter) []Entry
+        +ListEntries(filter)
         +ApplySyncState(state, peerID)
-        +Subscribe() Subscription
-        +ACL() *acl.Store
-        +Versions() *version.Store
+        +Subscribe()
+        +ACL()
+        +Versions()
     }
     class engineImpl {
-        -mu sync.Mutex
-        -replica *crdt.Replica
-        -store storage.Store
-        -events *EventBus
-        -schemas *schema.Registry
-        -versions *version.Store
-        -acls *acl.Store
-        -hooks *hooks.Manager
-        -localID string
+        -mu
+        -replica
+        -store
+        -events
+        -schemas
+        -versions
+        -acls
+        -hooks
+        -localID
     }
 
     class Replica {
-        -mu sync.RWMutex
-        -clock *core.Clock
-        -entries map[uuid.UUID]LWWElement
-        -tags map[uuid.UUID]*TagSet
-        -acls map[uuid.UUID]core.ACL
-        +AddEntry(type, content, tags) core.Entry
+        -mu
+        -clock
+        -entries
+        -tags
+        -acls
+        +AddEntry(type, content, tags)
         +UpdateEntry(id, content, tags)
         +DeleteEntry(id)
-        +Merge(other *Replica)
-        +State() ReplicaState
+        +Merge(other)
+        +State()
     }
 
     class Store {
         <<interface>>
         +Put(entry)
-        +Get(id) Entry
-        +List(filter) []Entry
+        +Get(id)
+        +List(filter)
         +Delete(id)
         +Close()
     }
     class SQLiteStore {
-        -db *sql.DB
+        -db
     }
 
     class SyncService {
@@ -84,28 +84,28 @@ classDiagram
         +ConnectPeer(invite)
     }
     class p2pService {
-        -host libp2p.Host
-        -provider StateProvider
-        -allowlist *Allowlist
-        -mdnsService mdns.Service
-        -dhtDiscovery *DHTDiscovery
+        -host
+        -provider
+        -allowlist
+        -mdnsService
+        -dhtDiscovery
         +handleStream(stream)
         +syncLoop()
     }
     class StateProvider {
         <<interface>>
-        +StateHash() []byte
-        +GetState() ReplicaState
+        +StateHash()
+        +GetState()
         +ApplyState(state, peerID)
     }
 
     Engine <|.. engineWrapper
     InternalEngineInterface <|.. engineImpl
     engineWrapper --> InternalEngineInterface : wraps
-    engineImpl --> Replica : manages state
-    engineImpl --> Store : persists views
+    engineImpl --> Replica : manages
+    engineImpl --> Store : persists
     engineImpl --> StateProvider : implements
-    p2pService --> StateProvider : uses to get/apply state
+    p2pService --> StateProvider : uses
     Store <|.. SQLiteStore
     SyncService <|.. p2pService
 ```
