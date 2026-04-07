@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -14,26 +15,125 @@ import (
 // Server is the HTTP API server
 type Server struct {
 	engine    engine.Engine
+	blobs     BlobStore
 	mux       *http.ServeMux
+	identity  func() (string, []string)
+	peers     func() []PeerInfo
 	peerCount func() int
+	invite    func() (string, error)
+	pair      func(string) error
 }
 
-// New creates a new API server
-func New(e engine.Engine, peerCount func() int) *Server {
+// PeerInfo describes a connected libp2p peer
+type PeerInfo struct {
+	ID       string   `json:"id"`
+	Addrs    []string `json:"addrs"`
+	Protocol string   `json:"protocol,omitempty"`
+}
+
+// BlobStore is a subset of internal/blob.Store
+type BlobStore interface {
+	Put(data []byte) (string, error)
+	Get(cid string) ([]byte, error)
+}
+
+func New(e engine.Engine) *Server {
 	s := &Server{
-		engine:    e,
-		mux:       http.NewServeMux(),
-		peerCount: peerCount,
+		engine: e,
+		mux:    http.NewServeMux(),
 	}
 	s.setupRoutes()
 	return s
 }
 
+// Config allows customizing the API server with optional capabilities
+type Config struct {
+	Identity  func() (string, []string)
+	Peers     func() []PeerInfo
+	PeerCount func() int
+	Invite    func() (string, error)
+	Pair      func(string) error
+	Blobs     BlobStore
+}
+
+// Configure adds optional capabilities to the server
+func (s *Server) Configure(cfg Config) {
+	s.identity = cfg.Identity
+	s.peers = cfg.Peers
+	s.peerCount = cfg.PeerCount
+	s.invite = cfg.Invite
+	s.pair = cfg.Pair
+	s.blobs = cfg.Blobs
+}
+
+func (s *Server) handleBlobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.blobs == nil {
+		http.Error(w, "Blobs not configured", http.StatusNotImplemented)
+		return
+	}
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	cid, err := s.blobs.Put(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"cid": cid,
+	})
+}
+
+func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.blobs == nil {
+		http.Error(w, "Blobs not configured", http.StatusNotImplemented)
+		return
+	}
+
+	cid := strings.TrimPrefix(r.URL.Path, "/blobs/")
+	if cid == "" {
+		http.Error(w, "Missing CID", http.StatusBadRequest)
+		return
+	}
+
+	data, err := s.blobs.Get(cid)
+	if err != nil {
+		http.Error(w, "Blob not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/entries", s.handleEntries)
 	s.mux.HandleFunc("/entries/", s.handleEntry)
+	s.mux.HandleFunc("/search", s.handleSearch)
 	s.mux.HandleFunc("/status", s.handleStatus)
+	s.mux.HandleFunc("/identity", s.handleIdentity)
+	s.mux.HandleFunc("/peers", s.handlePeers)
 	s.mux.HandleFunc("/events", s.handleEvents)
+	s.mux.HandleFunc("/invite", s.handleInvite)
+	s.mux.HandleFunc("/pair", s.handlePair)
+	s.mux.HandleFunc("/blobs", s.handleBlobs)
+	s.mux.HandleFunc("/blobs/", s.handleBlob)
 }
 
 // ServeHTTP implements http.Handler
@@ -227,6 +327,36 @@ func (s *Server) authorizeEntry(w http.ResponseWriter, r *http.Request, id uuid.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "Missing query parameter 'q'", http.StatusBadRequest)
+		return
+	}
+
+	opts := engine.SearchOptions{
+		Limit: 20,
+	}
+
+	if t := r.URL.Query().Get("type"); t != "" {
+		entryType := engine.EntryType(t)
+		opts.Type = &entryType
+	}
+
+	result, err := s.engine.Search(query, opts)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result.Entries)
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -244,7 +374,45 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["peer_count"] = s.peerCount()
 	}
 
+	if s.identity != nil {
+		id, _ := s.identity()
+		status["peer_id"] = id
+	}
+
 	respondJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.identity == nil {
+		http.Error(w, "Identity capability not configured", http.StatusNotImplemented)
+		return
+	}
+
+	id, addrs := s.identity()
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"peer_id": id,
+		"addrs":   addrs,
+	})
+}
+
+func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.peers == nil {
+		http.Error(w, "Peers capability not configured", http.StatusNotImplemented)
+		return
+	}
+
+	peers := s.peers()
+	respondJSON(w, http.StatusOK, peers)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +445,57 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.invite == nil {
+		http.Error(w, "Invite capability not configured", http.StatusNotImplemented)
+		return
+	}
+
+	code, err := s.invite()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"code": code,
+	})
+}
+
+func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.pair == nil {
+		http.Error(w, "Pair capability not configured", http.StatusNotImplemented)
+		return
+	}
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.pair(req.Code); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"status": "paired",
+	})
 }
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {

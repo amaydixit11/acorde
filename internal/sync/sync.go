@@ -21,7 +21,7 @@ import (
 // Config contains configuration for the SyncService
 type Config struct {
 	// ListenAddrs are the multiaddrs to listen on
-	// Default: /ip4/0.0.0.0/tcp/0 (random port)
+	// Default: /ip4/0.0.0.0/tcp/0, /ip4/0.0.0.0/udp/0/quic-v1
 	ListenAddrs []string
 
 	// SyncInterval is how often to sync with peers
@@ -33,8 +33,24 @@ type Config struct {
 	EnableMDNS bool
 
 	// EnableDHT enables Kademlia DHT for global peer discovery
-	// Default: false (uses IPFS bootstrap nodes)
+	// Default: true
 	EnableDHT bool
+
+	// EnableRelay enables libp2p Circuit Relay (v2) for NAT traversal
+	// Default: true
+	EnableRelay bool
+
+	// EnableHolePunching enables libp2p direct NAT hole punching
+	// Default: true
+	EnableHolePunching bool
+
+	// EnableUPnP enables automatic port forwarding via UPnP/NAT-PMP
+	// Default: true
+	EnableUPnP bool
+
+	// RendezvousNamespace is the DHT namespace for discovery
+	// Default: "acorde-p2p"
+	RendezvousNamespace string
 
 	// AllowlistPath is the path to the trusted peers file
 	// Default: "" (no persistence)
@@ -66,9 +82,17 @@ type Logger = LeveledLogger
 // DefaultConfig returns the default sync configuration
 func DefaultConfig() Config {
 	return Config{
-		ListenAddrs:  []string{"/ip4/0.0.0.0/tcp/0"},
-		SyncInterval: 5 * time.Second,
-		EnableMDNS:   true,
+		ListenAddrs: []string{
+			"/ip4/0.0.0.0/tcp/0",
+			"/ip4/0.0.0.0/udp/0/quic-v1",
+		},
+		SyncInterval:        5 * time.Second,
+		EnableMDNS:          true,
+		EnableDHT:           true,
+		EnableRelay:         true,
+		EnableHolePunching:  true,
+		EnableUPnP:          true,
+		RendezvousNamespace: "acorde-p2p",
 	}
 }
 

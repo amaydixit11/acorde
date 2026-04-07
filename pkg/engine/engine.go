@@ -102,6 +102,7 @@ type Engine interface {
 
 	// Querying
 	ListEntries(filter ListFilter) ([]Entry, error)
+	Search(query string, opts SearchOptions) (SearchResult, error)
 
 	// Sync hooks (called by transport layer)
 	GetSyncPayload() ([]byte, error)

@@ -49,3 +49,6 @@ __debug_bin*
 
 # Generated files
 digest.txt
+
+*.log
+.codex

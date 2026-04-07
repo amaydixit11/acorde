@@ -69,6 +69,21 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenAddrs...),
 	}
+
+	if cfg.EnableUPnP {
+		opts = append(opts, libp2p.NATPortMap())
+	}
+	if cfg.EnableRelay {
+		opts = append(opts, libp2p.EnableRelay())
+	}
+	if cfg.EnableHolePunching {
+		opts = append(opts, libp2p.EnableHolePunching())
+	}
+	if cfg.EnableDHT {
+		opts = append(opts, libp2p.EnableNATService())
+		opts = append(opts, libp2p.EnableHolePunching())
+	}
+
 	if cfg.PrivateKey != nil {
 		opts = append(opts, libp2p.Identity(cfg.PrivateKey))
 	}
@@ -90,7 +105,6 @@ func NewP2PService(provider StateProvider, cfg Config) (SyncService, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load allowlist: %w", err)
 		}
-		allowlist = al
 		allowlist = al
 		logger.Infof("Allowlist enabled (strict=%v): %d peers loaded", cfg.StrictAllowlist, al.Count())
 	}
@@ -132,7 +146,6 @@ func (s *p2pService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start mDNS: %w", err)
 		}
 		s.mdnsService = mdnsService
-		s.mdnsService = mdnsService
 		s.logger.Infof("mDNS discovery enabled")
 	}
 
@@ -147,8 +160,7 @@ func (s *p2pService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to start DHT: %w", err)
 		}
 		s.dhtDiscovery = dhtDiscovery
-		s.dhtDiscovery = dhtDiscovery
-		s.logger.Infof("DHT discovery enabled (global)")
+		s.logger.Infof("DHT discovery enabled (namespace: %s)", s.config.RendezvousNamespace)
 	}
 
 	// Start periodic sync

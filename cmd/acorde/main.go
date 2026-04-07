@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/amaydixit11/acorde/internal/blob"
 	"github.com/amaydixit11/acorde/internal/crdt"
 	"github.com/amaydixit11/acorde/internal/sync"
 	"github.com/amaydixit11/acorde/pkg/api"
@@ -220,6 +221,23 @@ func (s *syncableEngine) ApplySyncState(state crdt.ReplicaState, senderPeerID st
 	return s.Engine.ApplyRemotePayloadFromPeer(payload, senderPeerID)
 }
 
+func (s *syncableEngine) GetSyncPayload() ([]byte, error) {
+	return s.Engine.GetSyncPayload()
+}
+
+type blobStoreAdapter struct {
+	impl *blob.Store
+}
+
+func (a *blobStoreAdapter) Put(data []byte) (string, error) {
+	cid, err := a.impl.Put(data)
+	return string(cid), err
+}
+
+func (a *blobStoreAdapter) Get(cid string) ([]byte, error) {
+	return a.impl.Get(blob.CID(cid))
+}
+
 type sysLogger struct {
 	label   string
 	verbose bool
@@ -311,9 +329,57 @@ func cmdDaemon(args []string) {
 		}
 	}()
 
+	// Initialize blob store
+	blobStore, err := blob.NewStore(*dataDir)
+	if err != nil {
+		log.Printf("Warning: failed to initialize blob store: %v", err)
+	}
+
 	// Start API server if requested
 	if *apiPort > 0 {
-		apiServer := api.New(e, func() int { return len(svc.Peers()) })
+		apiServer := api.New(e)
+		apiServer.Configure(api.Config{
+			Identity: func() (string, []string) {
+				id := svc.GetHost().ID().String()
+				addrs := []string{}
+				for _, a := range svc.GetHost().Addrs() {
+					addrs = append(addrs, a.String())
+				}
+				return id, addrs
+			},
+			Peers: func() []api.PeerInfo {
+				peers := svc.Peers()
+				res := make([]api.PeerInfo, len(peers))
+				for i, p := range peers {
+					paddrs := []string{}
+					for _, a := range svc.GetHost().Peerstore().Addrs(p) {
+						paddrs = append(paddrs, a.String())
+					}
+					res[i] = api.PeerInfo{
+						ID:    p.String(),
+						Addrs: paddrs,
+					}
+				}
+				return res
+			},
+			PeerCount: func() int { return len(svc.Peers()) },
+			Invite: func() (string, error) {
+				invite, err := sync.CreateInvite(svc.GetHost(), 24*time.Hour)
+				if err != nil {
+					return "", err
+				}
+				return invite.Encode()
+			},
+			Pair: func(code string) error {
+				invite, err := sync.ParseInvite(code)
+				if err != nil {
+					return err
+				}
+				return svc.ConnectPeer(invite)
+			},
+			Blobs: &blobStoreAdapter{blobStore},
+		})
+
 		go func() {
 			log.Printf("🚀 Starting API server on http://localhost:%d", *apiPort)
 			if err := apiServer.ListenAndServe(fmt.Sprintf(":%d", *apiPort)); err != nil {
@@ -863,7 +929,7 @@ func cmdServe(args []string) {
 	defer e.Close()
 
 	// Import api package
-	apiServer := api.New(e, nil)
+	apiServer := api.New(e)
 
 	fmt.Printf("🚀 Starting API server on http://localhost:%s\n", port)
 	fmt.Printf("   GET    /entries\n")
