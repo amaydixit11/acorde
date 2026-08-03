@@ -145,9 +145,12 @@ This is a server-sent event stream. Each event is emitted as JSON after `data:`.
 
 ## Go Library
 
-### Create An Engine
+Import the public engine package:
 
 ```go
+import "github.com/amaydixit11/acorde/pkg/engine"
+
+// Create an Engine
 e, err := engine.New(engine.Config{
     DataDir: "./data",
 })

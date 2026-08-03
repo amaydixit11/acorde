@@ -212,7 +212,7 @@ e.DeleteEntry(entry.ID)
 // List entries
 entries, _ := e.ListEntries(engine.ListFilter{
     Type: &engine.Note,
-    Tag:  strPtr("demo"),
+    Tag:  engine.StringPtr("demo"),
 })
 ```
 
@@ -493,7 +493,7 @@ mgr, _ := engine.NewSharingManager(masterKey)
 shares, _ := mgr.ShareEntry(entryID, []engine.PeerID{alicePeerID})
 
 // Alice recovers key
-key, _ := sharing.RecoverSharedKey(share, entryID, alicePrivate, senderPublic)
+key, _ := engine.RecoverSharedKey(share, entryID, alicePrivate, senderPublic)
 ```
 
 ---

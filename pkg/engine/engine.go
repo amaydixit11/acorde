@@ -103,11 +103,19 @@ type Engine interface {
 	// Querying
 	ListEntries(filter ListFilter) ([]Entry, error)
 	Search(query string, opts SearchOptions) (SearchResult, error)
+	Query(q string) (QueryResult, error)
+	NewQuery() *QueryBuilder
 
 	// Sync hooks (called by transport layer)
 	GetSyncPayload() ([]byte, error)
 	ApplyRemotePayload(payload []byte) error
 	ApplyRemotePayloadFromPeer(payload []byte, peerID string) error
+
+	// Features (Phase 8)
+	RegisterSchema(entryType string, schemaJSON []byte) error
+	Versions() *VersionStore
+	ACL() *ACLStore
+	Hooks() *HookManager
 
 	// Events - Subscribe to change notifications
 	Subscribe() Subscription
@@ -229,6 +237,22 @@ func (w *engineWrapper) PeerID() string {
 	return w.impl.PeerID()
 }
 
+func (w *engineWrapper) RegisterSchema(entryType string, schemaJSON []byte) error {
+	return w.impl.RegisterSchema(entryType, schemaJSON)
+}
+
+func (w *engineWrapper) Versions() *VersionStore {
+	return w.impl.Versions()
+}
+
+func (w *engineWrapper) ACL() *ACLStore {
+	return w.impl.ACL()
+}
+
+func (w *engineWrapper) Hooks() *HookManager {
+	return w.impl.Hooks()
+}
+
 func (w *engineWrapper) Close() error {
 	return w.impl.Close()
 }
@@ -286,6 +310,26 @@ type Event struct {
 	EntryID   uuid.UUID `json:"entry_id"`
 	EntryType string    `json:"entry_type,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// StringPtr returns a pointer to the given string.
+func StringPtr(s string) *string {
+	return &s
+}
+
+// Int64Ptr returns a pointer to the given int64.
+func Int64Ptr(i int64) *int64 {
+	return &i
+}
+
+// Uint64Ptr returns a pointer to the given uint64.
+func Uint64Ptr(u uint64) *uint64 {
+	return &u
+}
+
+// ptr is a generic helper for tests, but we use typed helpers for public API
+func ptr[T any](v T) *T {
+	return &v
 }
 
 // Type conversion helpers

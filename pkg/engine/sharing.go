@@ -3,6 +3,7 @@ package engine
 import (
 	"github.com/amaydixit11/acorde/internal/sharing"
 	"github.com/amaydixit11/acorde/pkg/crypto"
+	"github.com/google/uuid"
 )
 
 // PeerID is a public key identifying a peer for key exchange
@@ -19,10 +20,11 @@ func NewSharingManager(masterKey crypto.Key) (*SharingManager, error) {
 // ShareableKey represents an entry key encrypted for a specific peer
 type ShareableKey = sharing.ShareableKey
 
-// For future: AddEntryInputWithSharing would look like:
-// type AddEntryInputWithSharing struct {
-//     Type      EntryType
-//     Content   []byte
-//     Tags      []string
-//     ShareWith []PeerID  // Peers who can decrypt this entry
-// }
+// RecoverSharedKey recovers an entry key from a share
+func RecoverSharedKey(share ShareableKey, entryID uuid.UUID, recipientPrivate [32]byte, senderPublic PeerID) (crypto.Key, error) {
+	keyPtr, err := sharing.RecoverSharedKey(&share, entryID, recipientPrivate, senderPublic)
+	if err != nil {
+		return crypto.Key{}, err
+	}
+	return *keyPtr, nil
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__apify__apify--rag-web-browser",
+      "Read(//home/amaydixit11/Downloads/chatgpt_data/**)",
+      "Bash(find *)",
+      "Bash(ls *)",
+      "Bash(python3 *)",
+      "Bash(go *)"
+    ]
+  },
+  "$version": 3
+}
